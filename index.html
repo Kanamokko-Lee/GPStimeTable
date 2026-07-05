@@ -201,6 +201,8 @@ textarea{min-height:64px; resize:vertical;}
     <!-- shared fields -->
     <label>駅名（表示名）</label>
     <input type="text" id="stName" placeholder="例：逗子">
+    <button class="small-link" id="btnNameSearch" type="button">🔎 この名前で候補を検索（緯度経度を自動入力）</button>
+    <div id="nameSearchResults"></div>
 
     <div class="row2">
       <div>
@@ -260,7 +262,12 @@ textarea{min-height:64px; resize:vertical;}
       プロキシを設定すると、ODPT APIへのリクエストは <span class="mono">consumerKeyを除いたパス</span> を末尾に付けてこのURLに送られます（例：<span class="mono">{proxy}/odpt:Station?...</span>）。空欄なら api.odpt.org に直接アクセスします（CORSエラーが出る場合はプロキシが必要です）。
     </div>
     <button class="btn" id="btnSaveSettings">保存</button>
-    <div class="hint" style="margin-top:18px;">全データはこの端末のブラウザ内（localStorage）にのみ保存されます。他の端末とは同期されません。</div>
+    <div class="hint" style="margin-top:18px;">全データはこの端末のブラウザ内（localStorage）にのみ保存されます。他の端末とは自動同期されません。別端末に移す場合は下のエクスポート/インポートを使ってください。</div>
+
+    <label style="margin-top:20px;">登録データのエクスポート／インポート</label>
+    <button class="btn secondary" id="btnExport" type="button">登録データをコピーする</button>
+    <textarea id="importArea" placeholder="別端末でコピーしたデータをここに貼り付け"></textarea>
+    <button class="btn secondary" id="btnImport" type="button">貼り付けたデータを読み込む（上書き）</button>
   </div>
 </div>
 
@@ -509,6 +516,7 @@ function openStationSheet(id){
   renderDirList();
   renderOdptFetchedPreview();
   document.getElementById('odptResults').innerHTML='';
+  document.getElementById('nameSearchResults').innerHTML='';
   document.getElementById('btnDeleteStation').style.display = s ? 'block' : 'none';
   populateOperatorSelect();
   overlayStation.classList.add('open');
@@ -595,6 +603,44 @@ function renderDirList(){
 document.getElementById('btnAddDir').onclick = ()=>{
   manualDirections.push({label:'', timetables:{weekday:[],saturday:[],holiday:[]}});
   renderDirList();
+};
+
+/* ---- station name candidate search (OpenStreetMap Nominatim, no key needed) ---- */
+document.getElementById('btnNameSearch').onclick = async ()=>{
+  const name = document.getElementById('stName').value.trim();
+  const resultsEl = document.getElementById('nameSearchResults');
+  if(!name){ alert('駅名を入力してください'); return; }
+  resultsEl.innerHTML = '<div class="hint">検索中…（OpenStreetMap）</div>';
+  try{
+    const q = encodeURIComponent(name + ' 駅');
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=jp&limit=8&q=${q}`);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if(!data.length){
+      resultsEl.innerHTML = '<div class="hint warn">候補が見つかりませんでした。緯度経度は手動入力するか「現在地の座標を使う」をご利用ください。</div>';
+      return;
+    }
+    // Prefer results OSM classifies as a railway station/stop
+    const sorted = data.slice().sort((a,b)=>{
+      const score = h => (h.class==='railway' ? 0 : 1);
+      return score(a)-score(b);
+    });
+    resultsEl.innerHTML = '<div class="hint">候補をタップすると緯度経度が入ります（出典: OpenStreetMap）</div>';
+    sorted.forEach(hit=>{
+      const div = document.createElement('div');
+      div.className = 'hit';
+      div.textContent = hit.display_name;
+      div.onclick = ()=>{
+        const lat = parseFloat(hit.lat).toFixed(6), lon = parseFloat(hit.lon).toFixed(6);
+        document.getElementById('stLat').value = lat;
+        document.getElementById('stLon').value = lon;
+        resultsEl.innerHTML = `<div class="hint" style="color:var(--teal)">緯度経度を入力しました：${lat}, ${lon}</div>`;
+      };
+      resultsEl.appendChild(div);
+    });
+  }catch(e){
+    resultsEl.innerHTML = `<div class="hint warn">検索に失敗しました：${escapeHtml(e.message)}</div>`;
+  }
 };
 
 /* ---- ODPT search & fetch ---- */
@@ -764,6 +810,34 @@ document.getElementById('btnSaveSettings').onclick = ()=>{
   settings.proxyBase = document.getElementById('cfgProxyBase').value.trim();
   saveSettings();
   overlaySettings.classList.remove('open');
+};
+
+/* ---- export / import (manual multi-device sync) ---- */
+document.getElementById('btnExport').onclick = async ()=>{
+  const payload = JSON.stringify({stations});
+  try{
+    await navigator.clipboard.writeText(payload);
+    alert('クリップボードにコピーしました。別端末を開いて、設定の「インポート」欄に貼り付けてください。');
+  }catch(e){
+    prompt('自動コピーできませんでした。以下を手動でコピーしてください：', payload);
+  }
+};
+document.getElementById('btnImport').onclick = ()=>{
+  const raw = document.getElementById('importArea').value.trim();
+  if(!raw) return;
+  try{
+    const parsed = JSON.parse(raw);
+    if(!Array.isArray(parsed.stations)) throw new Error('形式が不正です');
+    if(!confirm(`${parsed.stations.length}件の駅データを読み込みます。この端末の現在の登録内容は上書きされます。よろしいですか？`)) return;
+    stations = parsed.stations;
+    saveStations();
+    computeNearest(); renderChips(); renderBoards();
+    document.getElementById('importArea').value = '';
+    overlaySettings.classList.remove('open');
+    alert('読み込みました');
+  }catch(e){
+    alert('読み込みに失敗しました: '+e.message);
+  }
 };
 
 /* ============ misc wiring ============ */
