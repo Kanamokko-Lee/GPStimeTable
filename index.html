@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="発車標">
+<meta name="mobile-web-app-capable" content="yes">
+<title>発車標 — マイ時刻表</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230b0f14'/%3E%3Ctext x='32' y='42' font-size='30' text-anchor='middle' fill='%23ff9e2c' font-family='monospace'%3E%3A%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%230b0f14'/%3E%3Ctext x='32' y='42' font-size='30' text-anchor='middle' fill='%23ff9e2c' font-family='monospace'%3E%3A%3C/text%3E%3C/svg%3E">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=JetBrains+Mono:wght@500;600;700&display=swap');
+
+:root{
+  --bg:#0a0d12;
+  --panel:#12181f;
+  --panel-2:#171f28;
+  --line:#232c36;
+  --board:#ff9e2c;
+  --board-dim:#5a4426;
+  --board-soon:#ff5468;
+  --teal:#4fd1c5;
+  --text:#e7ecf1;
+  --muted:#7c8894;
+  --radius:18px;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+  font-family:'Noto Sans JP',system-ui,sans-serif; height:100%;
+  -webkit-font-smoothing:antialiased;}
+body{
+  padding: max(14px, env(safe-area-inset-top)) 14px max(24px, env(safe-area-inset-bottom));
+  max-width:520px; margin:0 auto;
+}
+.mono{font-family:'JetBrains Mono', ui-monospace, monospace;}
+
+/* ---------- header ---------- */
+header{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;}
+.clock{display:flex; flex-direction:column; line-height:1;}
+.clock .time{font-family:'JetBrains Mono'; font-size:30px; font-weight:700; letter-spacing:1px;}
+.clock .date{font-size:12px; color:var(--muted); margin-top:4px;}
+.daytype-badge{
+  font-size:11px; padding:3px 9px; border-radius:100px; border:1px solid var(--line);
+  color:var(--teal); white-space:nowrap; margin-left:8px;
+}
+.icon-btn{
+  width:38px;height:38px;border-radius:12px;border:1px solid var(--line);
+  background:var(--panel); color:var(--text); display:flex; align-items:center; justify-content:center;
+  font-size:18px; cursor:pointer;
+}
+.icon-btn:active{background:var(--panel-2);}
+.hdr-actions{display:flex; gap:8px;}
+
+/* ---------- nearest banner ---------- */
+.nearest-info{
+  display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted);
+  margin: 2px 0 14px;
+}
+.nearest-info button{
+  background:none;border:none;color:var(--teal);font-size:12px;cursor:pointer;padding:0;
+  text-decoration:underline;
+}
+.pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--teal); flex:none;}
+.pulse-dot.busy{background:var(--muted); animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+
+/* ---------- station chips ---------- */
+.chips{display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:14px; scrollbar-width:none;}
+.chips::-webkit-scrollbar{display:none;}
+.chip{
+  flex:none; padding:9px 14px; border-radius:100px; background:var(--panel);
+  border:1px solid var(--line); font-size:13px; font-weight:500; color:var(--muted);
+  display:flex; align-items:center; gap:6px; cursor:pointer; white-space:nowrap;
+}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--muted); flex:none;}
+.chip.active{border-color:var(--board); color:var(--text); background:#1c140a;}
+.chip.active .dot{background:var(--board);}
+.chip.add{color:var(--teal); border-style:dashed;}
+
+/* ---------- board card ---------- */
+.board{
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--line); border-radius:var(--radius);
+  padding:18px 16px 10px; margin-bottom:18px;
+  position:relative; overflow:hidden;
+}
+.board::before{
+  content:''; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(180deg, rgba(255,255,255,.015) 0px, rgba(255,255,255,.015) 1px, transparent 1px, transparent 3px);
+}
+.board-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; position:relative;}
+.board-head h2{font-size:19px; margin:0; font-weight:700; letter-spacing:.5px;}
+.board-head .src{font-size:10px; color:var(--muted); border:1px solid var(--line); padding:2px 7px; border-radius:100px;}
+.direction{margin-bottom:14px; position:relative;}
+.direction-label{font-size:12px; color:var(--teal); font-weight:500; margin-bottom:6px; display:flex; justify-content:space-between;}
+.direction-label .edit-link{color:var(--muted); cursor:pointer; text-decoration:underline; font-size:11px;}
+.dep-row{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;}
+.dep{
+  font-family:'JetBrains Mono'; font-weight:700; font-size:26px; color:var(--board-dim);
+  text-shadow:0 0 2px rgba(255,158,44,.0);
+  animation:flapIn .35s ease both;
+}
+.dep.next{color:var(--board); text-shadow:0 0 10px rgba(255,158,44,.55);}
+.dep.soon{color:var(--board-soon); text-shadow:0 0 10px rgba(255,84,104,.6);}
+.dep-sub{font-size:11px; color:var(--muted); display:block; margin-top:2px; font-family:'Noto Sans JP';}
+@keyframes flapIn{from{opacity:0; transform:translateY(-6px) scaleY(.7);} to{opacity:1; transform:none;}}
+@media (prefers-reduced-motion: reduce){.dep{animation:none;}}
+.empty-note{font-size:13px; color:var(--muted); padding:6px 0 4px;}
+.board-foot{display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--muted); margin-top:6px; position:relative;}
+.board-foot button{background:none; border:none; color:var(--muted); font-size:11px; text-decoration:underline; cursor:pointer;}
+
+/* ---------- fab ---------- */
+.fab{
+  position:fixed; right:20px; bottom:max(20px, env(safe-area-inset-bottom));
+  width:54px;height:54px;border-radius:50%; background:var(--board); color:#1a0f00;
+  font-size:26px; border:none; box-shadow:0 6px 18px rgba(255,158,44,.35); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; font-weight:700;
+}
+
+/* ---------- sheet / modal ---------- */
+.overlay{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:flex-end; z-index:50;}
+.overlay.open{display:flex;}
+.sheet{
+  background:var(--panel); width:100%; max-width:520px; margin:0 auto;
+  border-radius:20px 20px 0 0; padding:18px 16px max(18px, env(safe-area-inset-bottom));
+  max-height:88vh; overflow-y:auto; border-top:1px solid var(--line);
+}
+.sheet h3{margin:0 0 14px; font-size:17px;}
+.sheet-close{float:right; background:none; border:none; color:var(--muted); font-size:20px; cursor:pointer;}
+label{display:block; font-size:12px; color:var(--muted); margin:14px 0 6px;}
+input[type=text], input[type=number], select, textarea{
+  width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:10px;
+  color:var(--text); padding:10px 12px; font-size:14px; font-family:inherit;
+}
+textarea{min-height:64px; resize:vertical;}
+.row2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+.tabbar{display:flex; gap:6px; margin-top:6px;}
+.tabbar button{
+  flex:1; padding:8px; border-radius:10px; border:1px solid var(--line); background:var(--panel-2);
+  color:var(--muted); font-size:12px; cursor:pointer;
+}
+.tabbar button.active{color:var(--text); border-color:var(--board); background:#1c140a;}
+.dir-block{border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-top:10px; position:relative;}
+.dir-block .rm{position:absolute; top:8px; right:10px; background:none; border:none; color:var(--muted); cursor:pointer;}
+.btn{
+  width:100%; padding:12px; border-radius:12px; border:none; background:var(--board); color:#1a0f00;
+  font-weight:700; font-size:14px; margin-top:16px; cursor:pointer;
+}
+.btn.secondary{background:var(--panel-2); color:var(--text); border:1px solid var(--line);}
+.btn.ghost{background:none; color:var(--board-soon); border:1px solid var(--line);}
+.small-link{font-size:12px; color:var(--teal); text-decoration:underline; background:none; border:none; cursor:pointer; padding:0; margin-top:8px;}
+.hint{font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5;}
+.hit{padding:10px; border:1px solid var(--line); border-radius:10px; margin-top:8px; cursor:pointer; font-size:13px;}
+.hit:active{background:var(--panel-2);}
+.warn{color:var(--board-soon);}
+.mode-toggle{display:flex; gap:8px; margin-bottom:4px;}
+.mode-toggle button{flex:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="clock">
+    <div class="time mono" id="clockTime">--:--</div>
+    <div class="date" id="clockDate">----年--月--日</div>
+  </div>
+  <div style="display:flex; align-items:center;">
+    <span class="daytype-badge" id="dayTypeBadge">-</span>
+    <div class="hdr-actions" style="margin-left:10px;">
+      <button class="icon-btn" id="btnRefresh" title="更新">⟳</button>
+      <button class="icon-btn" id="btnSettings" title="設定">⚙</button>
+    </div>
+  </div>
+</header>
+
+<div class="nearest-info">
+  <span class="pulse-dot" id="geoDot"></span>
+  <span id="nearestText">現在地を取得して最寄り駅を判定します</span>
+  <button id="btnLocate">現在地取得</button>
+</div>
+
+<div class="chips" id="chips"></div>
+
+<div id="boards"></div>
+
+<button class="fab" id="fabAdd">＋</button>
+
+<!-- Add / Edit Station Sheet -->
+<div class="overlay" id="overlayStation">
+  <div class="sheet">
+    <button class="sheet-close" data-close>×</button>
+    <h3 id="stationSheetTitle">駅を登録</h3>
+
+    <div class="mode-toggle">
+      <button class="btn secondary" id="modeManual" type="button">手動入力</button>
+      <button class="btn secondary" id="modeOdpt" type="button">ODPTから検索</button>
+    </div>
+
+    <!-- shared fields -->
+    <label>駅名（表示名）</label>
+    <input type="text" id="stName" placeholder="例：逗子">
+
+    <div class="row2">
+      <div>
+        <label>緯度</label>
+        <input type="text" id="stLat" placeholder="35.2967">
+      </div>
+      <div>
+        <label>経度</label>
+        <input type="text" id="stLon" placeholder="139.5822">
+      </div>
+    </div>
+    <button class="small-link" id="btnUseCurrentLoc">📍 現在地の座標を使う</button>
+
+    <!-- ODPT search block -->
+    <div id="odptBlock" style="display:none;">
+      <label>事業者</label>
+      <select id="odptOperatorSelect"></select>
+      <label>事業者ID（自動入力・編集可）</label>
+      <input type="text" id="odptOperatorId">
+      <label>駅名で検索</label>
+      <input type="text" id="odptSearchKeyword" placeholder="例：品川">
+      <button class="btn secondary" id="btnOdptSearch" type="button">検索する</button>
+      <div id="odptResults"></div>
+      <div class="hint">JR東日本は通常この方法では時刻表を取得できません（⚠付き）。その場合は「手動入力」を使ってください。consumerKeyは設定（⚙）から登録できます。</div>
+    </div>
+
+    <!-- manual directions -->
+    <div id="manualBlock">
+      <label style="margin-top:20px;">方面（複数登録可）</label>
+      <div id="dirList"></div>
+      <button class="small-link" id="btnAddDir">＋ 方面を追加</button>
+    </div>
+
+    <!-- odpt fetched directions (read only preview) -->
+    <div id="odptFetchedBlock" style="display:none;">
+      <label style="margin-top:20px;">取得した方面・時刻表</label>
+      <div id="odptDirPreview" class="hint"></div>
+    </div>
+
+    <button class="btn" id="btnSaveStation">保存する</button>
+    <button class="btn ghost" id="btnDeleteStation" style="display:none;">この駅を削除</button>
+  </div>
+</div>
+
+<!-- Direction time-editor template lives in JS -->
+
+<!-- Settings Sheet -->
+<div class="overlay" id="overlaySettings">
+  <div class="sheet">
+    <button class="sheet-close" data-close>×</button>
+    <h3>設定</h3>
+    <label>ODPT consumerKey</label>
+    <input type="text" id="cfgConsumerKey" placeholder="developer.odpt.org で発行したキー">
+    <label>プロキシURL（任意・CORS回避用）</label>
+    <input type="text" id="cfgProxyBase" placeholder="例：https://your-worker.workers.dev/odpt">
+    <div class="hint">
+      プロキシを設定すると、ODPT APIへのリクエストは <span class="mono">consumerKeyを除いたパス</span> を末尾に付けてこのURLに送られます（例：<span class="mono">{proxy}/odpt:Station?...</span>）。空欄なら api.odpt.org に直接アクセスします（CORSエラーが出る場合はプロキシが必要です）。
+    </div>
+    <button class="btn" id="btnSaveSettings">保存</button>
+    <div class="hint" style="margin-top:18px;">全データはこの端末のブラウザ内（localStorage）にのみ保存されます。他の端末とは同期されません。</div>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ============ constants ============ */
+const LS_STATIONS = 'tt_stations';
+const LS_SETTINGS = 'tt_settings';
+const LS_HOLIDAYS = 'tt_holidays';
+const DAY_LABELS = {weekday:'平日', saturday:'土曜', holiday:'日祝'};
+const OPERATORS = [
+  {id:'Keikyu', name:'京急'},
+  {id:'TokyoMonorail', name:'東京モノレール'},
+  {id:'TokyoMetro', name:'東京メトロ'},
+  {id:'Toei', name:'都営'},
+  {id:'Tokyu', name:'東急'},
+  {id:'Odakyu', name:'小田急'},
+  {id:'Keio', name:'京王'},
+  {id:'Seibu', name:'西武'},
+  {id:'Tobu', name:'東武'},
+  {id:'Keisei', name:'京成'},
+  {id:'Sotetsu', name:'相鉄'},
+  {id:'Yurikamome', name:'ゆりかもめ'},
+  {id:'JR-East', name:'JR東日本（⚠通常利用不可）'},
+];
+
+/* ============ state ============ */
+let stations = loadStations();
+let settings = loadSettings();
+let activeStationId = null; // null = follow nearest
+let nearestStationId = null;
+let editingStationId = null; // for edit sheet
+let manualDirections = []; // working copy while editing
+let odptFetchedDirections = null; // {source:'odpt', operator, stationId, directions:[{label,railDirection,timetables:{weekday:[],saturday:[],holiday:[]}}]}
+let currentPos = null;
+
+function loadStations(){
+  try{ return JSON.parse(localStorage.getItem(LS_STATIONS)) || []; }catch(e){ return []; }
+}
+function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
+function loadSettings(){
+  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:''}; }catch(e){ return {consumerKey:'', proxyBase:''}; }
+}
+function saveSettings(){ localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); }
+function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
+
+/* ============ clock & day type ============ */
+function pad(n){ return n.toString().padStart(2,'0'); }
+function nowParts(){
+  const d = new Date();
+  return { d, hh:pad(d.getHours()), mm:pad(d.getMinutes()), ymd:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` };
+}
+function updateClock(){
+  const {d,hh,mm} = nowParts();
+  document.getElementById('clockTime').textContent = `${hh}:${mm}`;
+  const w = ['日','月','火','水','木','金','土'][d.getDay()];
+  document.getElementById('clockDate').textContent = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${w})`;
+}
+
+let holidaySet = null;
+async function ensureHolidays(){
+  try{
+    const cached = JSON.parse(localStorage.getItem(LS_HOLIDAYS) || 'null');
+    const today = nowParts().ymd;
+    if(cached && cached.fetchedOn === today){ holidaySet = new Set(Object.keys(cached.dates)); return; }
+    const res = await fetch('https://holidays-jp.github.io/api/v1/date.json');
+    if(!res.ok) throw new Error('holiday fetch failed');
+    const dates = await res.json();
+    localStorage.setItem(LS_HOLIDAYS, JSON.stringify({fetchedOn:today, dates}));
+    holidaySet = new Set(Object.keys(dates));
+  }catch(e){
+    // fallback: no holiday data, weekend-only logic
+    if(!holidaySet) holidaySet = new Set();
+  }
+}
+function getDayType(){
+  const {d, ymd} = nowParts();
+  if(holidaySet && holidaySet.has(ymd)) return 'holiday';
+  const dow = d.getDay();
+  if(dow === 0) return 'holiday';
+  if(dow === 6) return 'saturday';
+  return 'weekday';
+}
+function resolveTimes(timetables, dayType){
+  if(!timetables) return [];
+  const order = dayType === 'weekday' ? ['weekday','saturday','holiday']
+              : dayType === 'saturday' ? ['saturday','holiday','weekday']
+              : ['holiday','saturday','weekday'];
+  for(const k of order){
+    if(timetables[k] && timetables[k].length) return timetables[k];
+  }
+  return [];
+}
+
+/* ============ geolocation & nearest ============ */
+function haversine(lat1,lon1,lat2,lon2){
+  const R=6371000, toRad = x=>x*Math.PI/180;
+  const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function locate(){
+  const dot = document.getElementById('geoDot');
+  const text = document.getElementById('nearestText');
+  if(!navigator.geolocation){ text.textContent = '位置情報が利用できません'; return; }
+  dot.classList.add('busy');
+  text.textContent = '現在地を取得中…';
+  navigator.geolocation.getCurrentPosition(pos=>{
+    dot.classList.remove('busy');
+    currentPos = {lat:pos.coords.latitude, lon:pos.coords.longitude};
+    computeNearest();
+  }, err=>{
+    dot.classList.remove('busy');
+    text.textContent = '位置情報を取得できませんでした（' + err.message + '）';
+  }, {enableHighAccuracy:true, timeout:10000});
+}
+function computeNearest(){
+  const text = document.getElementById('nearestText');
+  const withCoords = stations.filter(s=>typeof s.lat==='number' && typeof s.lon==='number');
+  if(!currentPos || withCoords.length===0){
+    text.textContent = withCoords.length===0 ? '座標付きの駅がまだ登録されていません' : '現在地未取得';
+    nearestStationId = null;
+    renderChips(); renderBoards();
+    return;
+  }
+  let best=null, bestDist=Infinity;
+  withCoords.forEach(s=>{
+    const dist = haversine(currentPos.lat,currentPos.lon,s.lat,s.lon);
+    if(dist<bestDist){ bestDist=dist; best=s; }
+  });
+  nearestStationId = best.id;
+  const km = (bestDist/1000).toFixed(bestDist<10000?1:0);
+  text.innerHTML = `最寄り：<b style="color:var(--text)">${escapeHtml(best.name)}</b>（約${km}km）`;
+  renderChips(); renderBoards();
+}
+
+/* ============ rendering ============ */
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderChips(){
+  const wrap = document.getElementById('chips');
+  wrap.innerHTML = '';
+  stations.forEach(s=>{
+    const chip = document.createElement('div');
+    const isActive = activeStationId ? activeStationId===s.id : nearestStationId===s.id;
+    chip.className = 'chip' + (isActive ? ' active' : '');
+    chip.innerHTML = `<span class="dot"></span>${escapeHtml(s.name)}`;
+    chip.onclick = ()=>{ activeStationId = s.id; renderChips(); renderBoards(); };
+    chip.ondblclick = ()=> openStationSheet(s.id);
+    wrap.appendChild(chip);
+  });
+  if(stations.length){
+    const followChip = document.createElement('div');
+    followChip.className = 'chip' + (activeStationId===null?' active':'');
+    followChip.innerHTML = `<span class="dot"></span>最寄りに追従`;
+    followChip.onclick = ()=>{ activeStationId = null; renderChips(); renderBoards(); };
+    wrap.appendChild(followChip);
+  }
+}
+
+function timeToMinutes(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
+
+function renderBoards(){
+  const container = document.getElementById('boards');
+  container.innerHTML = '';
+  document.getElementById('dayTypeBadge').textContent = DAY_LABELS[getDayType()] || '-';
+
+  const showId = activeStationId || nearestStationId;
+  const list = showId ? stations.filter(s=>s.id===showId) : [];
+
+  if(stations.length===0){
+    container.innerHTML = `<div class="board"><div class="empty-note">まだ駅が登録されていません。右下の「＋」から登録してください。</div></div>`;
+    return;
+  }
+  if(list.length===0){
+    container.innerHTML = `<div class="board"><div class="empty-note">現在地を取得すると最寄り駅の時刻表が表示されます。上のチップから駅を選ぶこともできます。</div></div>`;
+    return;
+  }
+
+  const dayType = getDayType();
+  const {hh,mm} = nowParts();
+  const nowMin = Number(hh)*60+Number(mm);
+
+  list.forEach(s=>{
+    const board = document.createElement('div');
+    board.className = 'board';
+    let html = `<div class="board-head"><h2>${escapeHtml(s.name)}</h2><span class="src">${s.source==='odpt' ? 'ODPT自動' : '手動登録'}</span></div>`;
+
+    (s.directions||[]).forEach(dir=>{
+      const times = resolveTimes(dir.timetables, dayType).slice().sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
+      const upcoming = times.filter(t=>timeToMinutes(t) >= nowMin).slice(0,4);
+      html += `<div class="direction"><div class="direction-label"><span>${escapeHtml(dir.label)}</span></div>`;
+      if(upcoming.length===0){
+        html += `<div class="empty-note">本日の運行は終了、または${DAY_LABELS[dayType]}のダイヤ未登録です</div>`;
+      }else{
+        html += `<div class="dep-row">`;
+        upcoming.forEach((t,i)=>{
+          const diff = timeToMinutes(t)-nowMin;
+          const cls = i===0 ? (diff<=3 ? 'dep soon' : 'dep next') : 'dep';
+          html += `<span class="${cls} mono">${t}${i===0?`<span class="dep-sub">あと${diff}分</span>`:''}</span>`;
+        });
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+    if(!s.directions || s.directions.length===0){
+      html += `<div class="empty-note">方面・時刻がまだ登録されていません。編集してください。</div>`;
+    }
+
+    html += `<div class="board-foot"><span>${s.lastSynced ? '最終更新: '+s.lastSynced : ''}</span><span>
+      <button data-act="edit" data-id="${s.id}">編集</button>
+      ${s.source==='odpt' ? ' · <button data-act="resync" data-id="'+s.id+'">再取得</button>' : ''}
+    </span></div>`;
+
+    board.innerHTML = html;
+    container.appendChild(board);
+  });
+
+  container.querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=> openStationSheet(b.dataset.id));
+  container.querySelectorAll('button[data-act="resync"]').forEach(b=> b.onclick = ()=> resyncOdptStation(b.dataset.id));
+}
+
+function tick(){
+  updateClock();
+  // re-render boards every minute-tick for live countdown, but not too often
+  renderBoards();
+}
+
+/* ============ station sheet (add/edit) ============ */
+const overlayStation = document.getElementById('overlayStation');
+const overlaySettings = document.getElementById('overlaySettings');
+
+function openStationSheet(id){
+  editingStationId = id || null;
+  const s = id ? stations.find(x=>x.id===id) : null;
+  document.getElementById('stationSheetTitle').textContent = s ? '駅を編集' : '駅を登録';
+  document.getElementById('stName').value = s ? s.name : '';
+  document.getElementById('stLat').value = s && s.lat!=null ? s.lat : '';
+  document.getElementById('stLon').value = s && s.lon!=null ? s.lon : '';
+  manualDirections = s && s.source!=='odpt' ? JSON.parse(JSON.stringify(s.directions||[])) : [];
+  odptFetchedDirections = s && s.source==='odpt' ? {directions: JSON.parse(JSON.stringify(s.directions||[])), operator:s.odptOperator, stationId:s.odptStationId} : null;
+
+  setMode(s && s.source==='odpt' ? 'odpt' : 'manual');
+  renderDirList();
+  renderOdptFetchedPreview();
+  document.getElementById('odptResults').innerHTML='';
+  document.getElementById('btnDeleteStation').style.display = s ? 'block' : 'none';
+  populateOperatorSelect();
+  overlayStation.classList.add('open');
+}
+function closeStationSheet(){ overlayStation.classList.remove('open'); }
+
+let currentMode = 'manual';
+function setMode(mode){
+  currentMode = mode;
+  document.getElementById('odptBlock').style.display = mode==='odpt' ? 'block':'none';
+  document.getElementById('manualBlock').style.display = mode==='manual' ? 'block':'none';
+  document.getElementById('odptFetchedBlock').style.display = (mode==='odpt' && odptFetchedDirections) ? 'block':'none';
+  document.getElementById('modeManual').style.background = mode==='manual' ? 'var(--board)' : '';
+  document.getElementById('modeManual').style.color = mode==='manual' ? '#1a0f00' : '';
+  document.getElementById('modeOdpt').style.background = mode==='odpt' ? 'var(--board)' : '';
+  document.getElementById('modeOdpt').style.color = mode==='odpt' ? '#1a0f00' : '';
+}
+document.getElementById('modeManual').onclick = ()=> setMode('manual');
+document.getElementById('modeOdpt').onclick = ()=> setMode('odpt');
+
+function populateOperatorSelect(){
+  const sel = document.getElementById('odptOperatorSelect');
+  sel.innerHTML = OPERATORS.map(o=>`<option value="${o.id}">${o.name}</option>`).join('');
+  sel.onchange = ()=>{ document.getElementById('odptOperatorId').value = sel.value; };
+  if(!document.getElementById('odptOperatorId').value){
+    document.getElementById('odptOperatorId').value = sel.value;
+  }
+}
+
+document.getElementById('btnUseCurrentLoc').onclick = ()=>{
+  if(!navigator.geolocation){ alert('位置情報が利用できません'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    document.getElementById('stLat').value = pos.coords.latitude.toFixed(6);
+    document.getElementById('stLon').value = pos.coords.longitude.toFixed(6);
+  }, err=> alert('取得できませんでした: '+err.message));
+};
+
+/* ---- manual direction editor ---- */
+function renderDirList(){
+  const wrap = document.getElementById('dirList');
+  wrap.innerHTML = '';
+  manualDirections.forEach((dir, idx)=>{
+    const block = document.createElement('div');
+    block.className = 'dir-block';
+    block.innerHTML = `
+      <button class="rm" data-idx="${idx}">✕</button>
+      <label>方面名</label>
+      <input type="text" class="dirLabel" data-idx="${idx}" value="${escapeHtml(dir.label||'')}" placeholder="例：横浜・久里浜方面">
+      <div class="tabbar" data-idx="${idx}">
+        <button data-day="weekday" class="dayTab active">平日</button>
+        <button data-day="saturday" class="dayTab">土曜</button>
+        <button data-day="holiday" class="dayTab">日祝</button>
+      </div>
+      <label>発車時刻（カンマ区切り、例：06:03,06:15,06:32）</label>
+      <textarea class="dirTimes" data-idx="${idx}" data-day="weekday">${(dir.timetables.weekday||[]).join(',')}</textarea>
+    `;
+    wrap.appendChild(block);
+  });
+  // events
+  wrap.querySelectorAll('.rm').forEach(b=> b.onclick = ()=>{ manualDirections.splice(Number(b.dataset.idx),1); renderDirList(); });
+  wrap.querySelectorAll('.dirLabel').forEach(inp=> inp.oninput = ()=>{ manualDirections[Number(inp.dataset.idx)].label = inp.value; });
+  wrap.querySelectorAll('.tabbar').forEach(tb=>{
+    tb.querySelectorAll('button').forEach(btn=>{
+      btn.onclick = ()=>{
+        tb.querySelectorAll('button').forEach(x=>x.classList.remove('active'));
+        btn.classList.add('active');
+        const idx = tb.dataset.idx, day = btn.dataset.day;
+        const ta = wrap.querySelector(`.dirTimes[data-idx="${idx}"]`);
+        ta.dataset.day = day;
+        ta.value = (manualDirections[idx].timetables[day]||[]).join(',');
+      };
+    });
+  });
+  wrap.querySelectorAll('.dirTimes').forEach(ta=>{
+    ta.oninput = ()=>{
+      const idx = ta.dataset.idx, day = ta.dataset.day;
+      const times = ta.value.split(',').map(s=>s.trim()).filter(s=>/^\d{1,2}:\d{2}$/.test(s)).map(s=>{
+        const [h,m]=s.split(':'); return pad(Number(h))+':'+pad(Number(m));
+      });
+      manualDirections[idx].timetables[day] = times;
+    };
+  });
+}
+document.getElementById('btnAddDir').onclick = ()=>{
+  manualDirections.push({label:'', timetables:{weekday:[],saturday:[],holiday:[]}});
+  renderDirList();
+};
+
+/* ---- ODPT search & fetch ---- */
+function apiUrl(path){
+  const base = settings.proxyBase ? settings.proxyBase.replace(/\/$/,'') : 'https://api.odpt.org/api/v4';
+  return base + '/' + path;
+}
+function withKey(params){
+  if(!settings.proxyBase){ params['acl:consumerKey'] = settings.consumerKey; }
+  return Object.entries(params).map(([k,v])=>encodeURIComponent(k)+'='+encodeURIComponent(v)).join('&');
+}
+
+document.getElementById('btnOdptSearch').onclick = async ()=>{
+  const resultsEl = document.getElementById('odptResults');
+  const operatorId = document.getElementById('odptOperatorId').value.trim();
+  const keyword = document.getElementById('odptSearchKeyword').value.trim();
+  if(!operatorId){ alert('事業者を選択してください'); return; }
+  if(!settings.consumerKey && !settings.proxyBase){ alert('設定（⚙）でconsumerKeyまたはプロキシURLを登録してください'); return; }
+  resultsEl.innerHTML = '<div class="hint">検索中…</div>';
+  try{
+    const qs = withKey({'odpt:operator': 'odpt.Operator:'+operatorId});
+    const res = await fetch(apiUrl('odpt:Station?'+qs));
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const filtered = keyword ? data.filter(st => (st['dc:title']||'').includes(keyword)) : data.slice(0,30);
+    if(filtered.length===0){ resultsEl.innerHTML = '<div class="hint warn">該当する駅が見つかりませんでした</div>'; return; }
+    resultsEl.innerHTML = '';
+    filtered.forEach(st=>{
+      const div = document.createElement('div');
+      div.className = 'hit';
+      div.textContent = `${st['dc:title']}（${st['owl:sameAs']}）`;
+      div.onclick = ()=> selectOdptStation(st, operatorId);
+      resultsEl.appendChild(div);
+    });
+  }catch(e){
+    resultsEl.innerHTML = `<div class="hint warn">取得に失敗しました：${escapeHtml(e.message)}<br>CORSエラーの場合は設定（⚙）でプロキシURLを指定してください。</div>`;
+  }
+};
+
+async function selectOdptStation(st, operatorId){
+  const resultsEl = document.getElementById('odptResults');
+  resultsEl.innerHTML = '<div class="hint">時刻表を取得中…</div>';
+  document.getElementById('stName').value = st['dc:title'];
+  if(st['geo:lat']) document.getElementById('stLat').value = st['geo:lat'];
+  if(st['geo:long']) document.getElementById('stLon').value = st['geo:long'];
+  try{
+    const qs = withKey({'odpt:station': st['owl:sameAs']});
+    const res = await fetch(apiUrl('odpt:StationTimetable?'+qs));
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if(!data.length){ resultsEl.innerHTML = '<div class="hint warn">この駅の時刻表データは提供されていません（JR東日本などは対象外の場合があります）。手動入力をご利用ください。</div>'; return; }
+
+    // group by railDirection -> calendar
+    const byDir = {};
+    data.forEach(entry=>{
+      const dirId = entry['odpt:railDirection'] || 'unknown';
+      byDir[dirId] = byDir[dirId] || {label: dirId.split(':').pop(), timetables:{weekday:[],saturday:[],holiday:[]}};
+      const cal = (entry['odpt:calendar']||'').toLowerCase();
+      let key = 'weekday';
+      if(cal.includes('saturday')) key='saturday';
+      else if(cal.includes('holiday') || cal.includes('sunday')) key='holiday';
+      const times = (entry['odpt:stationTimetableObject']||[]).map(o=>o['odpt:departureTime']).filter(Boolean);
+      byDir[dirId].timetables[key] = times;
+    });
+    const directions = Object.values(byDir);
+    odptFetchedDirections = { operator: operatorId, stationId: st['owl:sameAs'], directions };
+    document.getElementById('odptFetchedBlock').style.display = 'block';
+    renderOdptFetchedPreview();
+    resultsEl.innerHTML = `<div class="hint" style="color:var(--teal)">${directions.length}方面の時刻表を取得しました。「保存する」を押してください。</div>`;
+  }catch(e){
+    resultsEl.innerHTML = `<div class="hint warn">時刻表の取得に失敗しました：${escapeHtml(e.message)}</div>`;
+  }
+}
+function renderOdptFetchedPreview(){
+  const el = document.getElementById('odptDirPreview');
+  if(!odptFetchedDirections){ el.textContent=''; return; }
+  el.innerHTML = odptFetchedDirections.directions.map(d=>
+    `・${escapeHtml(d.label)}：平日${d.timetables.weekday.length}件 / 土${d.timetables.saturday.length}件 / 日祝${d.timetables.holiday.length}件`
+  ).join('<br>');
+}
+
+async function resyncOdptStation(id){
+  const s = stations.find(x=>x.id===id);
+  if(!s || s.source!=='odpt') return;
+  if(!settings.consumerKey && !settings.proxyBase){ alert('設定（⚙）でconsumerKeyまたはプロキシURLを登録してください'); return; }
+  try{
+    const qs = withKey({'odpt:station': s.odptStationId});
+    const res = await fetch(apiUrl('odpt:StationTimetable?'+qs));
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const byDir = {};
+    data.forEach(entry=>{
+      const dirId = entry['odpt:railDirection'] || 'unknown';
+      byDir[dirId] = byDir[dirId] || {label: dirId.split(':').pop(), timetables:{weekday:[],saturday:[],holiday:[]}};
+      const cal = (entry['odpt:calendar']||'').toLowerCase();
+      let key = 'weekday';
+      if(cal.includes('saturday')) key='saturday';
+      else if(cal.includes('holiday') || cal.includes('sunday')) key='holiday';
+      const times = (entry['odpt:stationTimetableObject']||[]).map(o=>o['odpt:departureTime']).filter(Boolean);
+      byDir[dirId].timetables[key] = times;
+    });
+    s.directions = Object.values(byDir);
+    s.lastSynced = nowParts().ymd + ' ' + nowParts().hh + ':' + nowParts().mm;
+    saveStations();
+    renderBoards();
+  }catch(e){
+    alert('再取得に失敗しました: '+e.message);
+  }
+}
+
+/* ---- save / delete station ---- */
+document.getElementById('btnSaveStation').onclick = ()=>{
+  const name = document.getElementById('stName').value.trim();
+  if(!name){ alert('駅名を入力してください'); return; }
+  const latStr = document.getElementById('stLat').value.trim();
+  const lonStr = document.getElementById('stLon').value.trim();
+  const lat = latStr ? parseFloat(latStr) : null;
+  const lon = lonStr ? parseFloat(lonStr) : null;
+
+  let record;
+  if(currentMode==='odpt' && odptFetchedDirections){
+    record = {
+      id: editingStationId || uid(),
+      name, lat, lon,
+      source:'odpt',
+      odptOperator: odptFetchedDirections.operator,
+      odptStationId: odptFetchedDirections.stationId,
+      directions: odptFetchedDirections.directions,
+      lastSynced: nowParts().ymd + ' ' + nowParts().hh + ':' + nowParts().mm,
+    };
+  } else {
+    record = {
+      id: editingStationId || uid(),
+      name, lat, lon,
+      source:'manual',
+      directions: manualDirections.filter(d=>d.label.trim()!==''),
+    };
+  }
+
+  const idx = stations.findIndex(s=>s.id===record.id);
+  if(idx>=0) stations[idx] = record; else stations.push(record);
+  saveStations();
+  closeStationSheet();
+  computeNearest();
+  renderChips();
+  renderBoards();
+};
+document.getElementById('btnDeleteStation').onclick = ()=>{
+  if(!editingStationId) return;
+  if(!confirm('この駅を削除しますか？')) return;
+  stations = stations.filter(s=>s.id!==editingStationId);
+  saveStations();
+  closeStationSheet();
+  computeNearest();
+  renderChips();
+  renderBoards();
+};
+
+/* ============ settings ============ */
+document.getElementById('btnSettings').onclick = ()=>{
+  document.getElementById('cfgConsumerKey').value = settings.consumerKey || '';
+  document.getElementById('cfgProxyBase').value = settings.proxyBase || '';
+  overlaySettings.classList.add('open');
+};
+document.getElementById('btnSaveSettings').onclick = ()=>{
+  settings.consumerKey = document.getElementById('cfgConsumerKey').value.trim();
+  settings.proxyBase = document.getElementById('cfgProxyBase').value.trim();
+  saveSettings();
+  overlaySettings.classList.remove('open');
+};
+
+/* ============ misc wiring ============ */
+document.getElementById('fabAdd').onclick = ()=> openStationSheet(null);
+document.getElementById('btnLocate').onclick = locate;
+document.getElementById('btnRefresh').onclick = ()=>{ locate(); };
+document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
+  overlayStation.classList.remove('open');
+  overlaySettings.classList.remove('open');
+});
+[overlayStation, overlaySettings].forEach(ov=>{
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.classList.remove('open'); });
+});
+
+/* ============ init ============ */
+(async function init(){
+  await ensureHolidays();
+  updateClock();
+  renderChips();
+  renderBoards();
+  setInterval(tick, 15000);
+  // try silent geolocation on load (will prompt for permission)
+  locate();
+})();
+
+})();
+</script>
+</body>
+</html>
