@@ -611,7 +611,9 @@ document.getElementById('btnAddDir').onclick = ()=>{
 function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 async function searchOverpassStations(name){
-  const q = `[out:json][timeout:25];area["ISO3166-1"="JP"][admin_level=2]->.jp;(node["railway"="station"]["name"~"${escapeRegex(name)}"](area.jp);node["railway"="halt"]["name"~"${escapeRegex(name)}"](area.jp););out body 30;`;
+  // Japan bounding box (south, west, north, east) — much faster than resolving the JP admin boundary polygon.
+  const bbox = '24.0,122.0,46.5,146.5';
+  const q = `[out:json][timeout:25];(node(${bbox})["railway"="station"]["name"~"${escapeRegex(name)}"];node(${bbox})["railway"="halt"]["name"~"${escapeRegex(name)}"];);out body 40;`;
   const res = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
   if(!res.ok) throw new Error('Overpass HTTP '+res.status);
   const data = await res.json();
@@ -622,12 +624,15 @@ async function searchOverpassStations(name){
   });
 }
 async function searchNominatimStationsFallback(name){
-  const q = encodeURIComponent(name + ' 駅');
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=jp&limit=10&q=${q}`);
-  if(!res.ok) throw new Error('Nominatim HTTP '+res.status);
-  const data = await res.json();
-  const railwayOnly = data.filter(h => h.class==='railway' && ['station','halt','stop'].includes(h.type));
-  return railwayOnly.map(h=> ({ label: h.display_name, lat: parseFloat(h.lat), lon: parseFloat(h.lon) }));
+  async function run(q){
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=jp&limit=10&q=${encodeURIComponent(q)}`);
+    if(!res.ok) throw new Error('Nominatim HTTP '+res.status);
+    const data = await res.json();
+    return data.filter(h => h.class==='railway' && ['station','halt','stop'].includes(h.type));
+  }
+  let hits = await run(name);
+  if(hits.length===0) hits = await run(name + ' 駅');
+  return hits.map(h=> ({ label: h.display_name, lat: parseFloat(h.lat), lon: parseFloat(h.lon) }));
 }
 
 document.getElementById('btnNameSearch').onclick = async ()=>{
