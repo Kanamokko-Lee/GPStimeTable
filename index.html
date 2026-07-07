@@ -605,42 +605,64 @@ document.getElementById('btnAddDir').onclick = ()=>{
   renderDirList();
 };
 
-/* ---- station name candidate search (OpenStreetMap Nominatim, no key needed) ---- */
+/* ---- station name candidate search ----
+   Primary: Overpass API, queries only railway=station/halt nodes (no address/road noise).
+   Fallback: Nominatim, filtered strictly to railway-classed hits, only if Overpass fails/empty. */
+function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+async function searchOverpassStations(name){
+  const q = `[out:json][timeout:25];area["ISO3166-1"="JP"][admin_level=2]->.jp;(node["railway"="station"]["name"~"${escapeRegex(name)}"](area.jp);node["railway"="halt"]["name"~"${escapeRegex(name)}"](area.jp););out body 30;`;
+  const res = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
+  if(!res.ok) throw new Error('Overpass HTTP '+res.status);
+  const data = await res.json();
+  return (data.elements||[]).map(el=>{
+    const t = el.tags||{};
+    const extra = [t.operator, t.network].filter(Boolean).join(' / ');
+    return { label: t.name + (extra ? `（${extra}）` : ''), lat: el.lat, lon: el.lon };
+  });
+}
+async function searchNominatimStationsFallback(name){
+  const q = encodeURIComponent(name + ' 駅');
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=jp&limit=10&q=${q}`);
+  if(!res.ok) throw new Error('Nominatim HTTP '+res.status);
+  const data = await res.json();
+  const railwayOnly = data.filter(h => h.class==='railway' && ['station','halt','stop'].includes(h.type));
+  return railwayOnly.map(h=> ({ label: h.display_name, lat: parseFloat(h.lat), lon: parseFloat(h.lon) }));
+}
+
 document.getElementById('btnNameSearch').onclick = async ()=>{
   const name = document.getElementById('stName').value.trim();
   const resultsEl = document.getElementById('nameSearchResults');
   if(!name){ alert('駅名を入力してください'); return; }
-  resultsEl.innerHTML = '<div class="hint">検索中…（OpenStreetMap）</div>';
+  resultsEl.innerHTML = '<div class="hint">検索中…（OpenStreetMap / Overpass）</div>';
+  let hits = [];
+  let source = 'Overpass';
   try{
-    const q = encodeURIComponent(name + ' 駅');
-    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=jp&limit=8&q=${q}`);
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data = await res.json();
-    if(!data.length){
-      resultsEl.innerHTML = '<div class="hint warn">候補が見つかりませんでした。緯度経度は手動入力するか「現在地の座標を使う」をご利用ください。</div>';
-      return;
-    }
-    // Prefer results OSM classifies as a railway station/stop
-    const sorted = data.slice().sort((a,b)=>{
-      const score = h => (h.class==='railway' ? 0 : 1);
-      return score(a)-score(b);
-    });
-    resultsEl.innerHTML = '<div class="hint">候補をタップすると緯度経度が入ります（出典: OpenStreetMap）</div>';
-    sorted.forEach(hit=>{
-      const div = document.createElement('div');
-      div.className = 'hit';
-      div.textContent = hit.display_name;
-      div.onclick = ()=>{
-        const lat = parseFloat(hit.lat).toFixed(6), lon = parseFloat(hit.lon).toFixed(6);
-        document.getElementById('stLat').value = lat;
-        document.getElementById('stLon').value = lon;
-        resultsEl.innerHTML = `<div class="hint" style="color:var(--teal)">緯度経度を入力しました：${lat}, ${lon}</div>`;
-      };
-      resultsEl.appendChild(div);
-    });
-  }catch(e){
-    resultsEl.innerHTML = `<div class="hint warn">検索に失敗しました：${escapeHtml(e.message)}</div>`;
+    hits = await searchOverpassStations(name);
+  }catch(e){ hits = []; }
+  if(hits.length===0){
+    try{
+      hits = await searchNominatimStationsFallback(name);
+      source = 'Nominatim';
+    }catch(e){ hits = []; }
   }
+  if(hits.length===0){
+    resultsEl.innerHTML = '<div class="hint warn">駅の候補が見つかりませんでした。緯度経度は手動入力するか「現在地の座標を使う」をご利用ください。</div>';
+    return;
+  }
+  resultsEl.innerHTML = `<div class="hint">候補をタップすると緯度経度が入ります（出典: OpenStreetMap / ${source}）</div>`;
+  hits.forEach(hit=>{
+    const div = document.createElement('div');
+    div.className = 'hit';
+    div.textContent = hit.label;
+    div.onclick = ()=>{
+      const lat = hit.lat.toFixed(6), lon = hit.lon.toFixed(6);
+      document.getElementById('stLat').value = lat;
+      document.getElementById('stLon').value = lon;
+      resultsEl.innerHTML = `<div class="hint" style="color:var(--teal)">緯度経度を入力しました：${lat}, ${lon}</div>`;
+    };
+    resultsEl.appendChild(div);
+  });
 };
 
 /* ---- ODPT search & fetch ---- */
