@@ -201,8 +201,10 @@ textarea{min-height:64px; resize:vertical;}
     <!-- shared fields -->
     <label>駅名（表示名）</label>
     <input type="text" id="stName" placeholder="例：逗子">
-    <button class="small-link" id="btnNameSearch" type="button">🔎 この名前で候補を検索（緯度経度を自動入力）</button>
-    <div id="nameSearchResults"></div>
+    <div id="coordSearchBlock">
+      <button class="small-link" id="btnNameSearch" type="button">🔎 この名前で候補を検索（緯度経度を自動入力）</button>
+      <div id="nameSearchResults"></div>
+    </div>
 
     <div class="row2">
       <div>
@@ -222,11 +224,11 @@ textarea{min-height:64px; resize:vertical;}
       <select id="odptOperatorSelect"></select>
       <label>事業者ID（自動入力・編集可）</label>
       <input type="text" id="odptOperatorId">
-      <label>駅名で検索</label>
+      <label>駅名で検索（緯度経度と時刻表を自動取得）</label>
       <input type="text" id="odptSearchKeyword" placeholder="例：品川">
       <button class="btn secondary" id="btnOdptSearch" type="button">検索する</button>
       <div id="odptResults"></div>
-      <div class="hint">JR東日本は通常この方法では時刻表を取得できません（⚠付き）。その場合は「手動入力」を使ってください。consumerKeyは設定（⚙）から登録できます。</div>
+      <div class="hint">この検索で見つけた駅を選ぶと、緯度経度と時刻表が両方まとめて取得されます。JR東日本は通常この方法では時刻表を取得できません（⚠付き）。その場合は「手動入力」を使ってください。consumerKeyは設定（⚙）から登録できます。</div>
     </div>
 
     <!-- manual directions -->
@@ -528,6 +530,7 @@ function setMode(mode){
   currentMode = mode;
   document.getElementById('odptBlock').style.display = mode==='odpt' ? 'block':'none';
   document.getElementById('manualBlock').style.display = mode==='manual' ? 'block':'none';
+  document.getElementById('coordSearchBlock').style.display = mode==='manual' ? 'block':'none';
   document.getElementById('odptFetchedBlock').style.display = (mode==='odpt' && odptFetchedDirections) ? 'block':'none';
   document.getElementById('modeManual').style.background = mode==='manual' ? 'var(--board)' : '';
   document.getElementById('modeManual').style.color = mode==='manual' ? '#1a0f00' : '';
