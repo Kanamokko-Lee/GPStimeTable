@@ -741,18 +741,23 @@ function renderDirList(){
         let newCodes = 0;
         data.typeSummary.forEach(ts=>{
           if(!dir.labels.type[ts.code]){
+            const auto = data.typeLegend && data.typeLegend[ts.code];
             const known = settings.keikyuLabels.type[ts.code];
-            dir.labels.type[ts.code] = {label: known||'', travelMin:null};
-            if(!known) newCodes++;
+            dir.labels.type[ts.code] = {label: auto||known||'', travelMin:null};
+            if(auto) settings.keikyuLabels.type[ts.code] = auto;
+            if(!auto && !known) newCodes++;
           }
         });
         data.destSummary.forEach(ds=>{
           if(!dir.labels.dest[ds.code]){
+            const auto = data.destLegend && data.destLegend[ds.code];
             const known = settings.keikyuLabels.dest[ds.code];
-            dir.labels.dest[ds.code] = {label: known||''};
-            if(!known) newCodes++;
+            dir.labels.dest[ds.code] = {label: auto||known||''};
+            if(auto) settings.keikyuLabels.dest[ds.code] = auto;
+            if(!auto && !known) newCodes++;
           }
         });
+        saveSettings();
         renderDirList();
         const newTb = document.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
         if(newTb) newTb.click();
