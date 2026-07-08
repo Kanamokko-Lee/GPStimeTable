@@ -100,9 +100,9 @@ header{display:flex; align-items:center; justify-content:space-between; margin-b
 .dep-card{display:flex; flex-direction:column; align-items:flex-start; min-width:60px;}
 .dep-time{
   font-family:'JetBrains Mono'; font-weight:700; font-size:26px; color:var(--board-dim);
-  animation:flapIn .35s ease both; line-height:1.1;
+  line-height:1.1;
 }
-.dep-time.blink{animation:flapIn .35s ease both, blinkRed 1s steps(2, jump-none) infinite;}
+.dep-time.blink{animation:blinkRed 1s steps(2, jump-none) infinite;}
 .dep-line{font-size:11px; color:var(--muted); line-height:1.5; font-family:'Noto Sans JP'; min-height:16px;}
 .dep-line.dest{color:var(--teal);}
 @keyframes flapIn{from{opacity:0; transform:translateY(-6px) scaleY(.7);} to{opacity:1; transform:none;}}
@@ -716,7 +716,7 @@ function renderDirList(){
         <button data-day="saturday" class="dayTab">土曜</button>
         <button data-day="holiday" class="dayTab">日祝</button>
       </div>
-      <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 京急ページのURLを貼り付けて取り込む（選択中の曜日区分に反映）</button>
+      <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 京急ページのURLを貼り付けて取り込む（平日・土曜・日祝を自動でまとめて取得）</button>
       <label>発車時刻（カンマ区切り、例：06:03,06:15,06:32）</label>
       <textarea class="dirTimes" data-idx="${idx}" data-day="weekday">${(dir.timetables.weekday||[]).join(',')}</textarea>
       ${facetsHtml}
@@ -749,52 +749,54 @@ function renderDirList(){
   wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
     btn.onclick = async ()=>{
       const idx = Number(btn.dataset.idx);
-      const tb = wrap.querySelector(`.tabbar[data-idx="${idx}"]`);
-      const day = tb.querySelector('.dayTab.active').dataset.day;
-      const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n今選んでいる曜日区分「'+DAY_LABELS[day]+'」に取り込みます。');
+      const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n平日・土曜・日祝は自動でまとめて取り込みます。');
       if(!url) return;
       const originalLabel = btn.textContent;
-      btn.textContent = '取り込み中…';
+      btn.textContent = '取り込み中…（3曜日区分を確認しています）';
       try{
         const data = await importKeikyuData(url);
         const dir = manualDirections[idx];
         dir.codes = dir.codes || {};
         dir.labels = dir.labels || {type:{}, dest:{}};
         settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}};
-        dir.codes[day] = {};
-        const times = [];
-        data.departures.forEach(d=>{
-          times.push(d.time);
-          dir.codes[day][d.time] = {t:d.typeCode, d:d.destHex};
-        });
-        dir.timetables[day] = [...new Set(times)].sort();
         let newCodes = 0;
-        data.typeSummary.forEach(ts=>{
-          if(!dir.labels.type[ts.code]){
-            const auto = data.typeLegend && data.typeLegend[ts.code];
-            const known = settings.keikyuLabels.type[ts.code];
-            dir.labels.type[ts.code] = {label: auto||known||'', travelMin:null};
-            if(auto) settings.keikyuLabels.type[ts.code] = auto;
-            if(!auto && !known) newCodes++;
-          }
-        });
-        data.destSummary.forEach(ds=>{
-          if(!dir.labels.dest[ds.code]){
-            const auto = data.destLegend && data.destLegend[ds.code];
-            const known = settings.keikyuLabels.dest[ds.code];
-            dir.labels.dest[ds.code] = {label: auto||known||''};
-            if(auto) settings.keikyuLabels.dest[ds.code] = auto;
-            if(!auto && !known) newCodes++;
-          }
+        const gotDays = [];
+        Object.entries(data.byDayType).forEach(([day, dayData])=>{
+          gotDays.push(DAY_LABELS[day]||day);
+          dir.codes[day] = {};
+          const times = [];
+          dayData.departures.forEach(d=>{
+            times.push(d.time);
+            dir.codes[day][d.time] = {t:d.typeCode, d:d.destText};
+          });
+          dir.timetables[day] = [...new Set(times)].sort();
+          dayData.typeSummary.forEach(ts=>{
+            if(!dir.labels.type[ts.code]){
+              const auto = dayData.typeLegend && dayData.typeLegend[ts.code];
+              const known = settings.keikyuLabels.type[ts.code];
+              dir.labels.type[ts.code] = {label: auto||known||'', travelMin:null};
+              if(auto) settings.keikyuLabels.type[ts.code] = auto;
+              if(!auto && !known) newCodes++;
+            }
+          });
+          dayData.destSummary.forEach(ds=>{
+            if(!dir.labels.dest[ds.code]){
+              const auto = dayData.destLegend && dayData.destLegend[ds.code];
+              const known = settings.keikyuLabels.dest[ds.code];
+              dir.labels.dest[ds.code] = {label: auto||known||''};
+              if(auto) settings.keikyuLabels.dest[ds.code] = auto;
+              if(!auto && !known) newCodes++;
+            }
+          });
         });
         saveSettings();
         renderDirList();
         stationSheetDirty = true;
-        const newTb = document.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
-        if(newTb) newTb.click();
-        if(newCodes>0){
-          alert('新しい種別・行き先コードが見つかりました。下の入力欄で、表示されている「例：◯時◯分発」を実際の京急のページと見比べて、名前を付けてください（一度付ければ次回から自動で入ります）。');
-        }
+        const missing = ['weekday','saturday','holiday'].filter(d=>!data.byDayType[d]);
+        let msg = `${gotDays.join('・')}を取り込みました。`;
+        if(missing.length) msg += `（${missing.map(d=>DAY_LABELS[d]).join('・')}は自動判別できませんでした。曜日タブから手動で確認してください）`;
+        if(newCodes>0) msg += '\n新しい種別・行き先コードがあります。下の入力欄で名前を付けてください。';
+        alert(msg);
       }catch(e){
         alert('取り込みに失敗しました: '+e.message);
         btn.textContent = originalLabel;
@@ -912,18 +914,19 @@ document.getElementById('btnNameSearch').onclick = async ()=>{
   });
 };
 
-/* ---- import timetable by pasting a Keikyu norikae.keikyu.co.jp URL (via Cloudflare Worker proxy) ---- */
+/* ---- import timetable by pasting a Keikyu norikae.keikyu.co.jp URL (via Cloudflare Worker proxy) ----
+   Automatically also fetches Saturday/Sunday-holiday variants of the same page. */
 async function importKeikyuData(pageUrl){
   if(!settings.keikyuProxyBase){
     throw new Error('設定（⚙）で「時刻表取込プロキシURL」が未登録です');
   }
   const base = settings.keikyuProxyBase.replace(/\/$/,'');
-  const res = await fetch(base + '?url=' + encodeURIComponent(pageUrl));
+  const res = await fetch(base + '?url=' + encodeURIComponent(pageUrl) + '&multiday=1');
   if(!res.ok) throw new Error('HTTP '+res.status);
   const data = await res.json();
   if(data.error) throw new Error(data.error);
-  if(!data.departures || !data.departures.length) throw new Error('時刻が見つかりませんでした');
-  return data; // {departures:[{time,typeCode}], typeSummary:[{code,count,samples}], ...}
+  if(!data.byDayType || !Object.keys(data.byDayType).length) throw new Error('時刻が見つかりませんでした');
+  return data; // {byDayType:{weekday:{...}, saturday:{...}, holiday:{...}}, attempted:[...]}
 }
 
 /* ---- ODPT search & fetch ---- */
