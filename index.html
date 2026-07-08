@@ -360,14 +360,14 @@ function getDayType(){
   return 'weekday';
 }
 function resolveTimes(timetables, dayType){
-  if(!timetables) return [];
+  if(!timetables) return {times:[], usedDay:dayType};
   const order = dayType === 'weekday' ? ['weekday','saturday','holiday']
               : dayType === 'saturday' ? ['saturday','holiday','weekday']
               : ['holiday','saturday','weekday'];
   for(const k of order){
-    if(timetables[k] && timetables[k].length) return timetables[k];
+    if(timetables[k] && timetables[k].length) return {times:timetables[k], usedDay:k};
   }
-  return [];
+  return {times:[], usedDay:dayType};
 }
 
 /* ============ geolocation & nearest ============ */
@@ -438,6 +438,8 @@ function renderChips(){
 
 function timeToMinutes(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
 
+let typeFilterState = {}; // key: stationId + '::' + dirIdx -> Set of active type codes (absent = show all)
+
 function renderBoards(){
   const container = document.getElementById('boards');
   container.innerHTML = '';
@@ -464,18 +466,69 @@ function renderBoards(){
     board.className = 'board';
     let html = `<div class="board-head"><h2>${escapeHtml(s.name)}</h2><span class="src">${s.source==='odpt' ? 'ODPT自動' : '手動登録'}</span></div>`;
 
-    (s.directions||[]).forEach(dir=>{
-      const times = resolveTimes(dir.timetables, dayType).slice().sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
-      const upcoming = times.filter(t=>timeToMinutes(t) >= nowMin).slice(0,4);
+    (s.directions||[]).forEach((dir, dirIdx)=>{
+      const {times: rawTimes, usedDay} = resolveTimes(dir.timetables, dayType);
+      const typeCodesForDay = (dir.typeCodes && dir.typeCodes[usedDay]) || {};
+      const hasTypeLabels = dir.typeLabels && Object.values(dir.typeLabels).some(t=>t.label);
+      const filterKey = s.id+'::'+dirIdx;
+
       html += `<div class="direction"><div class="direction-label"><span>${escapeHtml(dir.label)}</span></div>`;
+
+      // type filter chips
+      if(hasTypeLabels){
+        if(!typeFilterState[filterKey]) typeFilterState[filterKey] = new Set(Object.keys(dir.typeLabels));
+        const active = typeFilterState[filterKey];
+        html += `<div class="chips" style="margin:-2px 0 8px;" data-filterkey="${filterKey}">`;
+        Object.entries(dir.typeLabels).forEach(([code, info])=>{
+          if(!info.label) return;
+          const isActive = active.has(code);
+          html += `<div class="chip${isActive?' active':''}" data-act="toggleType" data-filterkey="${filterKey}" data-code="${code}" style="padding:6px 12px; font-size:12px;"><span class="dot"></span>${escapeHtml(info.label)}</div>`;
+        });
+        html += `</div>`;
+      }
+
+      const active = typeFilterState[filterKey];
+      const filteredTimes = rawTimes.filter(t=>{
+        const code = typeCodesForDay[t];
+        if(!code || !active) return true;
+        return active.has(code);
+      }).slice().sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
+      const upcoming = filteredTimes.filter(t=>timeToMinutes(t) >= nowMin).slice(0,4);
+
       if(upcoming.length===0){
         html += `<div class="empty-note">本日の運行は終了、または${DAY_LABELS[dayType]}のダイヤ未登録です</div>`;
       }else{
+        // arrival-time comparison, if 2+ types have a travelMin configured
+        let bestCode = null;
+        if(hasTypeLabels){
+          const withTravel = Object.entries(dir.typeLabels).filter(([c,i])=>i.label && i.travelMin!=null);
+          if(withTravel.length>=2){
+            let bestEta = Infinity;
+            withTravel.forEach(([code])=>{
+              const nextForCode = filteredTimes.find(t=> typeCodesForDay[t]===code && timeToMinutes(t)>=nowMin);
+              if(nextForCode){
+                const eta = timeToMinutes(nextForCode) + dir.typeLabels[code].travelMin;
+                if(eta < bestEta){ bestEta = eta; bestCode = code; }
+              }
+            });
+          }
+        }
         html += `<div class="dep-row">`;
         upcoming.forEach((t,i)=>{
           const diff = timeToMinutes(t)-nowMin;
+          const code = typeCodesForDay[t];
+          const typeInfo = code && dir.typeLabels ? dir.typeLabels[code] : null;
+          const isFastest = code && bestCode && code===bestCode && t===upcoming.find(x=>typeCodesForDay[x]===bestCode);
           const cls = i===0 ? (diff<=3 ? 'dep soon' : 'dep next') : 'dep';
-          html += `<span class="${cls} mono">${t}${i===0?`<span class="dep-sub">あと${diff}分</span>`:''}</span>`;
+          let sub = '';
+          if(i===0) sub += `<span class="dep-sub">あと${diff}分</span>`;
+          if(typeInfo && typeInfo.label) sub += `<span class="dep-sub" style="color:var(--teal);">${escapeHtml(typeInfo.label)}</span>`;
+          if(isFastest && typeInfo && typeInfo.travelMin!=null){
+            const etaMin = timeToMinutes(t)+typeInfo.travelMin;
+            const etaStr = pad(Math.floor(etaMin/60)%24)+':'+pad(etaMin%60);
+            sub += `<span class="dep-sub" style="color:var(--board);">★最速 到着目安${etaStr}</span>`;
+          }
+          html += `<span class="${cls} mono">${t}${sub}</span>`;
         });
         html += `</div>`;
       }
@@ -496,6 +549,14 @@ function renderBoards(){
 
   container.querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=> openStationSheet(b.dataset.id));
   container.querySelectorAll('button[data-act="resync"]').forEach(b=> b.onclick = ()=> resyncOdptStation(b.dataset.id));
+  container.querySelectorAll('[data-act="toggleType"]').forEach(chip=>{
+    chip.onclick = ()=>{
+      const key = chip.dataset.filterkey, code = chip.dataset.code;
+      const set = typeFilterState[key];
+      if(set.has(code)) set.delete(code); else set.add(code);
+      renderBoards();
+    };
+  });
 }
 
 function tick(){
@@ -566,8 +627,30 @@ function renderDirList(){
   const wrap = document.getElementById('dirList');
   wrap.innerHTML = '';
   manualDirections.forEach((dir, idx)=>{
+    dir.typeCodes = dir.typeCodes || {};
+    dir.typeLabels = dir.typeLabels || {};
     const block = document.createElement('div');
     block.className = 'dir-block';
+    const codes = Object.keys(dir.typeLabels);
+    let typeEditorHtml = '';
+    if(codes.length){
+      typeEditorHtml = `<label style="margin-top:14px;">種別ラベル（このページで見えている色・アイコンと見比べて名前を付けてください）</label>`;
+      codes.forEach(code=>{
+        const info = dir.typeLabels[code] || {label:'', travelMin:null};
+        typeEditorHtml += `
+          <div class="row2" style="margin-top:6px; align-items:end;">
+            <div>
+              <label style="margin:0 0 4px;">コード${escapeHtml(code)}の種別名</label>
+              <input type="text" class="typeLabelInput" data-idx="${idx}" data-code="${code}" value="${escapeHtml(info.label||'')}" placeholder="例：急行">
+            </div>
+            <div>
+              <label style="margin:0 0 4px;">目安所要分（任意）</label>
+              <input type="number" class="typeTravelInput" data-idx="${idx}" data-code="${code}" value="${info.travelMin!=null?info.travelMin:''}" placeholder="例：11">
+            </div>
+          </div>`;
+      });
+      typeEditorHtml += `<div class="hint">所要分を2種類以上入れておくと、発車標に「どちらが早く着くか」の目安が出るようになります。</div>`;
+    }
     block.innerHTML = `
       <button class="rm" data-idx="${idx}">✕</button>
       <label>方面名</label>
@@ -580,12 +663,29 @@ function renderDirList(){
       <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 京急ページのURLを貼り付けて取り込む（選択中の曜日区分に反映）</button>
       <label>発車時刻（カンマ区切り、例：06:03,06:15,06:32）</label>
       <textarea class="dirTimes" data-idx="${idx}" data-day="weekday">${(dir.timetables.weekday||[]).join(',')}</textarea>
+      ${typeEditorHtml}
     `;
     wrap.appendChild(block);
   });
   // events
   wrap.querySelectorAll('.rm').forEach(b=> b.onclick = ()=>{ manualDirections.splice(Number(b.dataset.idx),1); renderDirList(); });
   wrap.querySelectorAll('.dirLabel').forEach(inp=> inp.oninput = ()=>{ manualDirections[Number(inp.dataset.idx)].label = inp.value; });
+  wrap.querySelectorAll('.typeLabelInput').forEach(inp=>{
+    inp.oninput = ()=>{
+      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+      const dir = manualDirections[idx];
+      dir.typeLabels[code] = dir.typeLabels[code] || {label:'', travelMin:null};
+      dir.typeLabels[code].label = inp.value;
+    };
+  });
+  wrap.querySelectorAll('.typeTravelInput').forEach(inp=>{
+    inp.oninput = ()=>{
+      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+      const dir = manualDirections[idx];
+      dir.typeLabels[code] = dir.typeLabels[code] || {label:'', travelMin:null};
+      dir.typeLabels[code].travelMin = inp.value===''? null : Number(inp.value);
+    };
+  });
   wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
     btn.onclick = async ()=>{
       const idx = Number(btn.dataset.idx);
@@ -593,16 +693,33 @@ function renderDirList(){
       const day = tb.querySelector('.dayTab.active').dataset.day;
       const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n今選んでいる曜日区分「'+DAY_LABELS[day]+'」に取り込みます。');
       if(!url) return;
+      const originalLabel = btn.textContent;
       btn.textContent = '取り込み中…';
       try{
-        const times = await importKeikyuTimes(url);
-        manualDirections[idx].timetables[day] = times;
+        const data = await importKeikyuData(url);
+        const dir = manualDirections[idx];
+        dir.typeCodes = dir.typeCodes || {};
+        dir.typeLabels = dir.typeLabels || {};
+        dir.typeCodes[day] = {};
+        const times = [];
+        data.departures.forEach(d=>{
+          times.push(d.time);
+          dir.typeCodes[day][d.time] = d.typeCode;
+        });
+        dir.timetables[day] = [...new Set(times)].sort();
+        data.typeSummary.forEach(ts=>{
+          if(!dir.typeLabels[ts.code]) dir.typeLabels[ts.code] = {label:'', travelMin:null};
+        });
+        if(data.typeSummary.length > 1){
+          alert(`${data.typeSummary.length}種類の種別コードが見つかりました（下の「種別ラベル」欄で、それぞれ何行きの何という種別か名前を付けてください。サンプル時刻: ` +
+            data.typeSummary.map(ts=>`コード${ts.code}=${ts.samples.join('/')}など`).join('、') + `）`);
+        }
         renderDirList();
-        const newTb = wrap.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
+        const newTb = document.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
         if(newTb) newTb.click();
       }catch(e){
         alert('取り込みに失敗しました: '+e.message);
-        btn.textContent = '📋 京急ページのURLを貼り付けて取り込む（選択中の曜日区分に反映）';
+        btn.textContent = originalLabel;
       }
     };
   });
@@ -629,7 +746,7 @@ function renderDirList(){
   });
 }
 document.getElementById('btnAddDir').onclick = ()=>{
-  manualDirections.push({label:'', timetables:{weekday:[],saturday:[],holiday:[]}});
+  manualDirections.push({label:'', timetables:{weekday:[],saturday:[],holiday:[]}, typeCodes:{}, typeLabels:{}});
   renderDirList();
 };
 
@@ -718,7 +835,7 @@ document.getElementById('btnNameSearch').onclick = async ()=>{
 };
 
 /* ---- import timetable by pasting a Keikyu norikae.keikyu.co.jp URL (via Cloudflare Worker proxy) ---- */
-async function importKeikyuTimes(pageUrl){
+async function importKeikyuData(pageUrl){
   if(!settings.keikyuProxyBase){
     throw new Error('設定（⚙）で「時刻表取込プロキシURL」が未登録です');
   }
@@ -727,8 +844,8 @@ async function importKeikyuTimes(pageUrl){
   if(!res.ok) throw new Error('HTTP '+res.status);
   const data = await res.json();
   if(data.error) throw new Error(data.error);
-  if(!data.times || !data.times.length) throw new Error('時刻が見つかりませんでした');
-  return data.times;
+  if(!data.departures || !data.departures.length) throw new Error('時刻が見つかりませんでした');
+  return data; // {departures:[{time,typeCode}], typeSummary:[{code,count,samples}], ...}
 }
 
 /* ---- ODPT search & fetch ---- */
