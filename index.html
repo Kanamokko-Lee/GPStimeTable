@@ -96,17 +96,18 @@ header{display:flex; align-items:center; justify-content:space-between; margin-b
 .direction{margin-bottom:14px; position:relative;}
 .direction-label{font-size:12px; color:var(--teal); font-weight:500; margin-bottom:6px; display:flex; justify-content:space-between;}
 .direction-label .edit-link{color:var(--muted); cursor:pointer; text-decoration:underline; font-size:11px;}
-.dep-row{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;}
-.dep{
+.dep-grid{display:flex; flex-wrap:wrap; gap:14px 20px;}
+.dep-card{display:flex; flex-direction:column; align-items:flex-start; min-width:60px;}
+.dep-time{
   font-family:'JetBrains Mono'; font-weight:700; font-size:26px; color:var(--board-dim);
-  text-shadow:0 0 2px rgba(255,158,44,.0);
-  animation:flapIn .35s ease both;
+  animation:flapIn .35s ease both; line-height:1.1;
 }
-.dep.next{color:var(--board); text-shadow:0 0 10px rgba(255,158,44,.55);}
-.dep.soon{color:var(--board-soon); text-shadow:0 0 10px rgba(255,84,104,.6);}
-.dep-sub{font-size:11px; color:var(--muted); display:block; margin-top:2px; font-family:'Noto Sans JP';}
+.dep-time.blink{animation:flapIn .35s ease both, blinkRed 1s steps(2, jump-none) infinite;}
+.dep-line{font-size:11px; color:var(--muted); line-height:1.5; font-family:'Noto Sans JP'; min-height:16px;}
+.dep-line.dest{color:var(--teal);}
 @keyframes flapIn{from{opacity:0; transform:translateY(-6px) scaleY(.7);} to{opacity:1; transform:none;}}
-@media (prefers-reduced-motion: reduce){.dep{animation:none;}}
+@keyframes blinkRed{50%{opacity:.2;}}
+@media (prefers-reduced-motion: reduce){.dep-time{animation:none;} .dep-time.blink{animation:none;}}
 .empty-note{font-size:13px; color:var(--muted); padding:6px 0 4px;}
 .board-foot{display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--muted); margin-top:6px; position:relative;}
 .board-foot button{background:none; border:none; color:var(--muted); font-size:11px; text-decoration:underline; cursor:pointer;}
@@ -326,7 +327,7 @@ function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now
 function pad(n){ return n.toString().padStart(2,'0'); }
 function nowParts(){
   const d = new Date();
-  return { d, hh:pad(d.getHours()), mm:pad(d.getMinutes()), ymd:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` };
+  return { d, hh:pad(d.getHours()), mm:pad(d.getMinutes()), ss:pad(d.getSeconds()), ymd:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}` };
 }
 function updateClock(){
   const {d,hh,mm} = nowParts();
@@ -438,6 +439,19 @@ function renderChips(){
 
 function timeToMinutes(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
 
+// Per-operator color presets for train types, matched by label text.
+// Keikyu: express-family = blue, local = the board's default/plain text color.
+// Other operators can get their own preset later; unmatched labels fall back to the default dim amber.
+const TYPE_COLOR_PRESETS = {
+  keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
+};
+function typeColorFor(label){
+  if(!label) return null;
+  for(const preset of Object.values(TYPE_COLOR_PRESETS)){
+    if(preset[label]) return preset[label];
+  }
+  return null;
+}
 let filterState = {}; // key: stationId + '::' + dirIdx -> {type:Set, dest:Set} of active codes (absent = show all)
 
 function renderBoards(){
@@ -458,8 +472,9 @@ function renderBoards(){
   }
 
   const dayType = getDayType();
-  const {hh,mm} = nowParts();
+  const {hh,mm,ss} = nowParts();
   const nowMin = Number(hh)*60+Number(mm);
+  const nowSeconds = Number(hh)*3600+Number(mm)*60+Number(ss);
 
   list.forEach(s=>{
     const board = document.createElement('div');
@@ -516,24 +531,35 @@ function renderBoards(){
             }
           });
         }
-        html += `<div class="dep-row">`;
-        upcoming.forEach((t,i)=>{
-          const diff = timeToMinutes(t)-nowMin;
+        html += `<div class="dep-grid">`;
+        upcoming.forEach((t)=>{
           const c = codesForDay[t];
           const typeInfo = c && c.t!=null && labels.type ? labels.type[c.t] : null;
           const destInfo = c && c.d!=null && labels.dest ? labels.dest[c.d] : null;
           const isFastest = bestTime!=null && t===bestTime;
-          const cls = i===0 ? (diff<=3 ? 'dep soon' : 'dep next') : 'dep';
-          let sub = '';
-          if(i===0) sub += `<span class="dep-sub">あと${diff}分</span>`;
-          const tags = [typeInfo&&typeInfo.label, destInfo&&destInfo.label].filter(Boolean).join(' / ');
-          if(tags) sub += `<span class="dep-sub" style="color:var(--teal);">${escapeHtml(tags)}</span>`;
+
+          const depSeconds = timeToMinutes(t)*60;
+          const diffSeconds = depSeconds - nowSeconds;
+          const diffMin = Math.max(0, Math.ceil(diffSeconds/60));
+          let color, blink = false;
+          if(diffSeconds<=30){ color='var(--board-soon)'; blink=true; }
+          else if(diffSeconds<=60){ color='var(--board-soon)'; }
+          else if(diffSeconds<=180){ color='#ffd23f'; }
+          else { color = typeColorFor(typeInfo&&typeInfo.label) || 'var(--board-dim)'; }
+
+          let countdownText = `あと${diffMin}分`;
           if(isFastest && typeInfo && typeInfo.travelMin!=null){
             const etaMin = timeToMinutes(t)+typeInfo.travelMin;
             const etaStr = pad(Math.floor(etaMin/60)%24)+':'+pad(etaMin%60);
-            sub += `<span class="dep-sub" style="color:var(--board);">★最速 到着目安${etaStr}</span>`;
+            countdownText = `★${countdownText} 着${etaStr}`;
           }
-          html += `<span class="${cls} mono">${t}${sub}</span>`;
+
+          html += `<div class="dep-card">
+            <span class="dep-time mono${blink?' blink':''}" style="color:${color};">${t}</span>
+            <span class="dep-line dest">${destInfo&&destInfo.label?escapeHtml(destInfo.label):'&nbsp;'}</span>
+            <span class="dep-line" style="${typeInfo&&typeInfo.label?('color:'+(typeColorFor(typeInfo.label)||'var(--muted)')+';'):''}">${typeInfo&&typeInfo.label?escapeHtml(typeInfo.label):'&nbsp;'}</span>
+            <span class="dep-line">${countdownText}</span>
+          </div>`;
         });
         html += `</div>`;
       }
@@ -1135,7 +1161,7 @@ document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
   updateClock();
   renderChips();
   renderBoards();
-  setInterval(tick, 15000);
+  setInterval(tick, 1000);
   // try silent geolocation on load (will prompt for permission)
   locate();
 })();
