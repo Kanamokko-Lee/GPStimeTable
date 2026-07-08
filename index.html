@@ -96,7 +96,11 @@ header{display:flex; align-items:center; justify-content:space-between; margin-b
 .direction{margin-bottom:14px; position:relative;}
 .direction-label{font-size:12px; color:var(--teal); font-weight:500; margin-bottom:6px; display:flex; justify-content:space-between;}
 .direction-label .edit-link{color:var(--muted); cursor:pointer; text-decoration:underline; font-size:11px;}
-.dep-grid{display:flex; flex-wrap:wrap; gap:14px 20px;}
+.dep-grid{
+  display:flex; flex-wrap:nowrap; overflow-x:auto; gap:14px 20px; padding-bottom:6px;
+  -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity;
+}
+.dep-card{scroll-snap-align:start;}
 .dep-card{display:flex; flex-direction:column; align-items:flex-start; min-width:60px;}
 .dep-time{
   font-family:'JetBrains Mono'; font-weight:700; font-size:26px; color:var(--board-dim);
@@ -168,7 +172,7 @@ textarea{min-height:64px; resize:vertical;}
     <div class="date" id="clockDate">----年--月--日</div>
   </div>
   <div style="display:flex; align-items:center;">
-    <span class="daytype-badge" id="dayTypeBadge">-</span>
+    <span class="daytype-badge" id="dayTypeBadge" style="cursor:pointer;" title="タップで曜日区分を切り替え">-</span>
     <div class="hdr-actions" style="margin-left:10px;">
       <button class="icon-btn" id="btnRefresh" title="更新">⟳</button>
       <button class="icon-btn" id="btnSettings" title="設定">⚙</button>
@@ -352,7 +356,9 @@ async function ensureHolidays(){
     if(!holidaySet) holidaySet = new Set();
   }
 }
+let dayTypeOverride = null; // null = auto (based on today's real date), else 'weekday'|'saturday'|'holiday'
 function getDayType(){
+  if(dayTypeOverride) return dayTypeOverride;
   const {d, ymd} = nowParts();
   if(holidaySet && holidaySet.has(ymd)) return 'holiday';
   const dow = d.getDay();
@@ -457,7 +463,10 @@ let filterState = {}; // key: stationId + '::' + dirIdx -> {type:Set, dest:Set} 
 function renderBoards(){
   const container = document.getElementById('boards');
   container.innerHTML = '';
-  document.getElementById('dayTypeBadge').textContent = DAY_LABELS[getDayType()] || '-';
+  const badge = document.getElementById('dayTypeBadge');
+  badge.textContent = (DAY_LABELS[getDayType()] || '-') + (dayTypeOverride ? '（指定）' : '');
+  badge.style.borderColor = dayTypeOverride ? 'var(--teal)' : '';
+  badge.style.color = dayTypeOverride ? 'var(--teal)' : '';
 
   const showId = activeStationId || nearestStationId;
   const list = showId ? stations.filter(s=>s.id===showId) : [];
@@ -513,7 +522,13 @@ function renderBoards(){
         if(destActive && c.d!=null && !destActive.has(c.d)) return false;
         return true;
       }).slice().sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
-      const upcoming = filteredTimes.filter(t=>timeToMinutes(t) >= nowMin).slice(0,4);
+      let upcoming = filteredTimes.filter(t=>{
+        const mins = timeToMinutes(t);
+        return mins >= nowMin && mins <= nowMin + 75;
+      }).slice(0,20);
+      if(upcoming.length < 2){
+        upcoming = filteredTimes.filter(t=>timeToMinutes(t) >= nowMin).slice(0,4);
+      }
 
       if(upcoming.length===0){
         html += `<div class="empty-note">本日の運行は終了、または${DAY_LABELS[dayType]}のダイヤ未登録です</div>`;
@@ -1139,6 +1154,12 @@ document.getElementById('btnImport').onclick = ()=>{
 
 /* ============ misc wiring ============ */
 document.getElementById('fabAdd').onclick = ()=> openStationSheet(null);
+document.getElementById('dayTypeBadge').onclick = ()=>{
+  const order = [null,'weekday','saturday','holiday'];
+  const idx = order.indexOf(dayTypeOverride);
+  dayTypeOverride = order[(idx+1) % order.length];
+  renderBoards();
+};
 document.getElementById('btnLocate').onclick = locate;
 document.getElementById('btnRefresh').onclick = ()=>{ locate(); };
 document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
