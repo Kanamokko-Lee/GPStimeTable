@@ -263,6 +263,10 @@ textarea{min-height:64px; resize:vertical;}
     <div class="hint">
       プロキシを設定すると、ODPT APIへのリクエストは <span class="mono">consumerKeyを除いたパス</span> を末尾に付けてこのURLに送られます（例：<span class="mono">{proxy}/odpt:Station?...</span>）。空欄なら api.odpt.org に直接アクセスします（CORSエラーが出る場合はプロキシが必要です）。
     </div>
+
+    <label>時刻表取込プロキシURL（京急ページの貼り付け取り込み用）</label>
+    <input type="text" id="cfgKeikyuProxyBase" placeholder="例：https://your-worker.workers.dev/keikyu-timetable">
+    <div class="hint">京急の時刻表ページ（norikae.keikyu.co.jp）をURLで貼り付けて取り込む機能に使うCloudflare WorkerのURLです。デプロイ方法は会話で共有したコードを参照してください。</div>
     <button class="btn" id="btnSaveSettings">保存</button>
     <div class="hint" style="margin-top:18px;">全データはこの端末のブラウザ内（localStorage）にのみ保存されます。他の端末とは自動同期されません。別端末に移す場合は下のエクスポート/インポートを使ってください。</div>
 
@@ -313,7 +317,7 @@ function loadStations(){
 }
 function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
 function loadSettings(){
-  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:''}; }catch(e){ return {consumerKey:'', proxyBase:''}; }
+  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:''}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:''}; }
 }
 function saveSettings(){ localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); }
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
@@ -573,6 +577,7 @@ function renderDirList(){
         <button data-day="saturday" class="dayTab">土曜</button>
         <button data-day="holiday" class="dayTab">日祝</button>
       </div>
+      <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 京急ページのURLを貼り付けて取り込む（選択中の曜日区分に反映）</button>
       <label>発車時刻（カンマ区切り、例：06:03,06:15,06:32）</label>
       <textarea class="dirTimes" data-idx="${idx}" data-day="weekday">${(dir.timetables.weekday||[]).join(',')}</textarea>
     `;
@@ -581,6 +586,26 @@ function renderDirList(){
   // events
   wrap.querySelectorAll('.rm').forEach(b=> b.onclick = ()=>{ manualDirections.splice(Number(b.dataset.idx),1); renderDirList(); });
   wrap.querySelectorAll('.dirLabel').forEach(inp=> inp.oninput = ()=>{ manualDirections[Number(inp.dataset.idx)].label = inp.value; });
+  wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const idx = Number(btn.dataset.idx);
+      const tb = wrap.querySelector(`.tabbar[data-idx="${idx}"]`);
+      const day = tb.querySelector('.dayTab.active').dataset.day;
+      const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n今選んでいる曜日区分「'+DAY_LABELS[day]+'」に取り込みます。');
+      if(!url) return;
+      btn.textContent = '取り込み中…';
+      try{
+        const times = await importKeikyuTimes(url);
+        manualDirections[idx].timetables[day] = times;
+        renderDirList();
+        const newTb = wrap.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
+        if(newTb) newTb.click();
+      }catch(e){
+        alert('取り込みに失敗しました: '+e.message);
+        btn.textContent = '📋 京急ページのURLを貼り付けて取り込む（選択中の曜日区分に反映）';
+      }
+    };
+  });
   wrap.querySelectorAll('.tabbar').forEach(tb=>{
     tb.querySelectorAll('button').forEach(btn=>{
       btn.onclick = ()=>{
@@ -612,11 +637,30 @@ document.getElementById('btnAddDir').onclick = ()=>{
    Primary: Overpass API, queries only railway=station/halt nodes (no address/road noise).
    Fallback: Nominatim, filtered strictly to railway-classed hits, only if Overpass fails/empty. */
 function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+// Normalize hiragana->katakana so "の" and "ノ" etc. match each other (common typo point, e.g. 日ノ出町/日の出町)
+function kanaNormalize(s){
+  return (s||'').normalize('NFKC').replace(/[\u3041-\u3096]/g, ch => String.fromCharCode(ch.charCodeAt(0)+0x60));
+}
+// Build a regex pattern where each hiragana/katakana char matches either form, for use against OSM/ODPT names server-side
+function buildKanaFlexiblePattern(s){
+  let out = '';
+  for(const ch of s){
+    const code = ch.charCodeAt(0);
+    if(code>=0x3041 && code<=0x3096){ // hiragana -> allow katakana too
+      out += `[${ch}${String.fromCharCode(code+0x60)}]`;
+    } else if(code>=0x30A1 && code<=0x30F6){ // katakana -> allow hiragana too
+      out += `[${String.fromCharCode(code-0x60)}${ch}]`;
+    } else {
+      out += escapeRegex(ch);
+    }
+  }
+  return out;
+}
 
 async function searchOverpassStations(name){
   // Japan bounding box (south, west, north, east) — much faster than resolving the JP admin boundary polygon.
   const bbox = '24.0,122.0,46.5,146.5';
-  const q = `[out:json][timeout:25];(node(${bbox})["railway"="station"]["name"~"${escapeRegex(name)}"];node(${bbox})["railway"="halt"]["name"~"${escapeRegex(name)}"];);out body 40;`;
+  const q = `[out:json][timeout:25];(node(${bbox})["railway"="station"]["name"~"${buildKanaFlexiblePattern(name)}"];node(${bbox})["railway"="halt"]["name"~"${buildKanaFlexiblePattern(name)}"];);out body 40;`;
   const res = await fetch('https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(q));
   if(!res.ok) throw new Error('Overpass HTTP '+res.status);
   const data = await res.json();
@@ -673,6 +717,20 @@ document.getElementById('btnNameSearch').onclick = async ()=>{
   });
 };
 
+/* ---- import timetable by pasting a Keikyu norikae.keikyu.co.jp URL (via Cloudflare Worker proxy) ---- */
+async function importKeikyuTimes(pageUrl){
+  if(!settings.keikyuProxyBase){
+    throw new Error('設定（⚙）で「時刻表取込プロキシURL」が未登録です');
+  }
+  const base = settings.keikyuProxyBase.replace(/\/$/,'');
+  const res = await fetch(base + '?url=' + encodeURIComponent(pageUrl));
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const data = await res.json();
+  if(data.error) throw new Error(data.error);
+  if(!data.times || !data.times.length) throw new Error('時刻が見つかりませんでした');
+  return data.times;
+}
+
 /* ---- ODPT search & fetch ---- */
 function apiUrl(path){
   const base = settings.proxyBase ? settings.proxyBase.replace(/\/$/,'') : 'https://api.odpt.org/api/v4';
@@ -695,7 +753,7 @@ document.getElementById('btnOdptSearch').onclick = async ()=>{
     const res = await fetch(apiUrl('odpt:Station?'+qs));
     if(!res.ok) throw new Error('HTTP '+res.status);
     const data = await res.json();
-    const filtered = keyword ? data.filter(st => (st['dc:title']||'').includes(keyword)) : data.slice(0,30);
+    const filtered = keyword ? data.filter(st => kanaNormalize(st['dc:title']||'').includes(kanaNormalize(keyword))) : data.slice(0,30);
     if(filtered.length===0){ resultsEl.innerHTML = '<div class="hint warn">該当する駅が見つかりませんでした</div>'; return; }
     resultsEl.innerHTML = '';
     filtered.forEach(st=>{
@@ -833,11 +891,13 @@ document.getElementById('btnDeleteStation').onclick = ()=>{
 document.getElementById('btnSettings').onclick = ()=>{
   document.getElementById('cfgConsumerKey').value = settings.consumerKey || '';
   document.getElementById('cfgProxyBase').value = settings.proxyBase || '';
+  document.getElementById('cfgKeikyuProxyBase').value = settings.keikyuProxyBase || '';
   overlaySettings.classList.add('open');
 };
 document.getElementById('btnSaveSettings').onclick = ()=>{
   settings.consumerKey = document.getElementById('cfgConsumerKey').value.trim();
   settings.proxyBase = document.getElementById('cfgProxyBase').value.trim();
+  settings.keikyuProxyBase = document.getElementById('cfgKeikyuProxyBase').value.trim();
   saveSettings();
   overlaySettings.classList.remove('open');
 };
