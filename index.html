@@ -462,6 +462,11 @@ let filterState = {}; // key: stationId + '::' + dirIdx -> {type:Set, dest:Set} 
 
 function renderBoards(){
   const container = document.getElementById('boards');
+  // preserve horizontal scroll position of each direction's departure strip across rebuilds
+  const scrollPositions = {};
+  container.querySelectorAll('.dep-grid[data-gridkey]').forEach(el=>{
+    scrollPositions[el.dataset.gridkey] = el.scrollLeft;
+  });
   container.innerHTML = '';
   const badge = document.getElementById('dayTypeBadge');
   badge.textContent = (DAY_LABELS[getDayType()] || '-') + (dayTypeOverride ? '（指定）' : '');
@@ -546,7 +551,7 @@ function renderBoards(){
             }
           });
         }
-        html += `<div class="dep-grid">`;
+        html += `<div class="dep-grid" data-gridkey="${filterKey}">`;
         upcoming.forEach((t)=>{
           const c = codesForDay[t];
           const typeInfo = c && c.t!=null && labels.type ? labels.type[c.t] : null;
@@ -570,10 +575,10 @@ function renderBoards(){
           }
 
           html += `<div class="dep-card">
-            <span class="dep-time mono${blink?' blink':''}" style="color:${color};">${t}</span>
+            <span class="dep-time mono${blink?' blink':''}" style="color:${color};" data-time="${t}" data-typelabel="${escapeHtml((typeInfo&&typeInfo.label)||'')}">${t}</span>
             <span class="dep-line dest">${destInfo&&destInfo.label?escapeHtml(destInfo.label):'&nbsp;'}</span>
             <span class="dep-line" style="${typeInfo&&typeInfo.label?('color:'+(typeColorFor(typeInfo.label)||'var(--muted)')+';'):''}">${typeInfo&&typeInfo.label?escapeHtml(typeInfo.label):'&nbsp;'}</span>
-            <span class="dep-line">${countdownText}</span>
+            <span class="dep-line" data-countdown data-eta-suffix="${isFastest && typeInfo && typeInfo.travelMin!=null ? escapeHtml(countdownText.replace(/^★あと\d+分\s*/,'')) : ''}" data-fastest="${isFastest?'1':''}">${countdownText}</span>
           </div>`;
         });
         html += `</div>`;
@@ -603,12 +608,40 @@ function renderBoards(){
       renderBoards();
     };
   });
+  container.querySelectorAll('.dep-grid[data-gridkey]').forEach(el=>{
+    if(scrollPositions[el.dataset.gridkey]!=null) el.scrollLeft = scrollPositions[el.dataset.gridkey];
+  });
+}
+
+function updateLiveDepartureStyles(){
+  const {hh,mm,ss} = nowParts();
+  const nowSeconds = Number(hh)*3600+Number(mm)*60+Number(ss);
+  document.querySelectorAll('.dep-time[data-time]').forEach(el=>{
+    const t = el.dataset.time;
+    const typeLabel = el.dataset.typelabel || '';
+    const depSeconds = timeToMinutes(t)*60;
+    const diffSeconds = depSeconds - nowSeconds;
+    let color, blink = false;
+    if(diffSeconds<=30){ color='var(--board-soon)'; blink=true; }
+    else if(diffSeconds<=60){ color='var(--board-soon)'; }
+    else if(diffSeconds<=180){ color='#ffd23f'; }
+    else { color = typeColorFor(typeLabel) || 'var(--board-dim)'; }
+    el.style.color = color;
+    el.classList.toggle('blink', blink);
+
+    const card = el.closest('.dep-card');
+    const countdownEl = card && card.querySelector('[data-countdown]');
+    if(countdownEl){
+      const diffMin = Math.max(0, Math.ceil(diffSeconds/60));
+      const suffix = countdownEl.dataset.etaSuffix;
+      countdownEl.textContent = suffix ? `★あと${diffMin}分 ${suffix}` : `あと${diffMin}分`;
+    }
+  });
 }
 
 function tick(){
   updateClock();
-  // re-render boards every minute-tick for live countdown, but not too often
-  renderBoards();
+  updateLiveDepartureStyles();
 }
 
 /* ============ station sheet (add/edit) ============ */
@@ -1186,6 +1219,7 @@ document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
   renderChips();
   renderBoards();
   setInterval(tick, 1000);
+  setInterval(renderBoards, 30000);
   // try silent geolocation on load (will prompt for permission)
   locate();
 })();
