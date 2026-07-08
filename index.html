@@ -574,6 +574,9 @@ function tick(){
 const overlayStation = document.getElementById('overlayStation');
 const overlaySettings = document.getElementById('overlaySettings');
 
+let stationSheetDirty = false;
+overlayStation.addEventListener('input', ()=>{ stationSheetDirty = true; });
+
 function openStationSheet(id){
   editingStationId = id || null;
   const s = id ? stations.find(x=>x.id===id) : null;
@@ -591,6 +594,7 @@ function openStationSheet(id){
   document.getElementById('nameSearchResults').innerHTML='';
   document.getElementById('btnDeleteStation').style.display = s ? 'block' : 'none';
   populateOperatorSelect();
+  stationSheetDirty = false;
   overlayStation.classList.add('open');
 }
 function closeStationSheet(){ overlayStation.classList.remove('open'); }
@@ -759,6 +763,7 @@ function renderDirList(){
         });
         saveSettings();
         renderDirList();
+        stationSheetDirty = true;
         const newTb = document.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
         if(newTb) newTb.click();
         if(newCodes>0){
@@ -1024,17 +1029,26 @@ document.getElementById('btnSaveStation').onclick = ()=>{
       lastSynced: nowParts().ymd + ' ' + nowParts().hh + ':' + nowParts().mm,
     };
   } else {
+    manualDirections.forEach((dir, i)=>{
+      const hasData = Object.values(dir.timetables||{}).some(arr=>arr && arr.length);
+      if(!dir.label.trim() && hasData){
+        // derive a fallback name from the most common destination label seen, if any
+        const destLabels = Object.values(dir.labels && dir.labels.dest || {}).map(x=>x.label).filter(Boolean);
+        dir.label = destLabels.length ? `${destLabels[0]}方面` : `方面${i+1}`;
+      }
+    });
     record = {
       id: editingStationId || uid(),
       name, lat, lon,
       source:'manual',
-      directions: manualDirections.filter(d=>d.label.trim()!==''),
+      directions: manualDirections.filter(d=>d.label.trim()!=='' || Object.values(d.timetables||{}).some(arr=>arr&&arr.length)),
     };
   }
 
   const idx = stations.findIndex(s=>s.id===record.id);
   if(idx>=0) stations[idx] = record; else stations.push(record);
   saveStations();
+  stationSheetDirty = false;
   closeStationSheet();
   computeNearest();
   renderChips();
@@ -1099,11 +1113,20 @@ document.getElementById('fabAdd').onclick = ()=> openStationSheet(null);
 document.getElementById('btnLocate').onclick = locate;
 document.getElementById('btnRefresh').onclick = ()=>{ locate(); };
 document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
+  if(overlayStation.classList.contains('open') && stationSheetDirty){
+    if(!confirm('保存していない変更があります。閉じてよろしいですか？（入力内容は失われます）')) return;
+  }
   overlayStation.classList.remove('open');
   overlaySettings.classList.remove('open');
 });
 [overlayStation, overlaySettings].forEach(ov=>{
-  ov.addEventListener('click', e=>{ if(e.target===ov) ov.classList.remove('open'); });
+  ov.addEventListener('click', e=>{
+    if(e.target!==ov) return;
+    if(ov===overlayStation && stationSheetDirty){
+      if(!confirm('保存していない変更があります。閉じてよろしいですか？（入力内容は失われます）')) return;
+    }
+    ov.classList.remove('open');
+  });
 });
 
 /* ============ init ============ */
