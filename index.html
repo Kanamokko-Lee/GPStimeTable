@@ -317,7 +317,7 @@ function loadStations(){
 }
 function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
 function loadSettings(){
-  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:''}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:''}; }
+  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}}}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}}}; }
 }
 function saveSettings(){ localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); }
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
@@ -438,7 +438,7 @@ function renderChips(){
 
 function timeToMinutes(t){ const [h,m]=t.split(':').map(Number); return h*60+m; }
 
-let typeFilterState = {}; // key: stationId + '::' + dirIdx -> Set of active type codes (absent = show all)
+let filterState = {}; // key: stationId + '::' + dirIdx -> {type:Set, dest:Set} of active codes (absent = show all)
 
 function renderBoards(){
   const container = document.getElementById('boards');
@@ -468,61 +468,66 @@ function renderBoards(){
 
     (s.directions||[]).forEach((dir, dirIdx)=>{
       const {times: rawTimes, usedDay} = resolveTimes(dir.timetables, dayType);
-      const typeCodesForDay = (dir.typeCodes && dir.typeCodes[usedDay]) || {};
-      const hasTypeLabels = dir.typeLabels && Object.values(dir.typeLabels).some(t=>t.label);
+      const codesForDay = (dir.codes && dir.codes[usedDay]) || {};
+      const labels = dir.labels || {type:{}, dest:{}};
+      const hasFacetLabels = f => Object.values(labels[f]||{}).some(x=>x.label);
       const filterKey = s.id+'::'+dirIdx;
+      filterState[filterKey] = filterState[filterKey] || {};
 
       html += `<div class="direction"><div class="direction-label"><span>${escapeHtml(dir.label)}</span></div>`;
 
-      // type filter chips
-      if(hasTypeLabels){
-        if(!typeFilterState[filterKey]) typeFilterState[filterKey] = new Set(Object.keys(dir.typeLabels));
-        const active = typeFilterState[filterKey];
-        html += `<div class="chips" style="margin:-2px 0 8px;" data-filterkey="${filterKey}">`;
-        Object.entries(dir.typeLabels).forEach(([code, info])=>{
+      FACETS.forEach(facet=>{
+        if(!hasFacetLabels(facet.key)) return;
+        if(!filterState[filterKey][facet.key]) filterState[filterKey][facet.key] = new Set(Object.keys(labels[facet.key]));
+        const active = filterState[filterKey][facet.key];
+        html += `<div class="chips" style="margin:-2px 0 8px;">`;
+        Object.entries(labels[facet.key]).forEach(([code, info])=>{
           if(!info.label) return;
           const isActive = active.has(code);
-          html += `<div class="chip${isActive?' active':''}" data-act="toggleType" data-filterkey="${filterKey}" data-code="${code}" style="padding:6px 12px; font-size:12px;"><span class="dot"></span>${escapeHtml(info.label)}</div>`;
+          html += `<div class="chip${isActive?' active':''}" data-act="toggleFacet" data-filterkey="${filterKey}" data-facet="${facet.key}" data-code="${code}" style="padding:6px 12px; font-size:12px;"><span class="dot"></span>${escapeHtml(info.label)}</div>`;
         });
         html += `</div>`;
-      }
+      });
 
-      const active = typeFilterState[filterKey];
+      const typeActive = filterState[filterKey].type;
+      const destActive = filterState[filterKey].dest;
       const filteredTimes = rawTimes.filter(t=>{
-        const code = typeCodesForDay[t];
-        if(!code || !active) return true;
-        return active.has(code);
+        const c = codesForDay[t];
+        if(!c) return true;
+        if(typeActive && c.t!=null && !typeActive.has(c.t)) return false;
+        if(destActive && c.d!=null && !destActive.has(c.d)) return false;
+        return true;
       }).slice().sort((a,b)=>timeToMinutes(a)-timeToMinutes(b));
       const upcoming = filteredTimes.filter(t=>timeToMinutes(t) >= nowMin).slice(0,4);
 
       if(upcoming.length===0){
         html += `<div class="empty-note">本日の運行は終了、または${DAY_LABELS[dayType]}のダイヤ未登録です</div>`;
       }else{
-        // arrival-time comparison, if 2+ types have a travelMin configured
-        let bestCode = null;
-        if(hasTypeLabels){
-          const withTravel = Object.entries(dir.typeLabels).filter(([c,i])=>i.label && i.travelMin!=null);
-          if(withTravel.length>=2){
-            let bestEta = Infinity;
-            withTravel.forEach(([code])=>{
-              const nextForCode = filteredTimes.find(t=> typeCodesForDay[t]===code && timeToMinutes(t)>=nowMin);
-              if(nextForCode){
-                const eta = timeToMinutes(nextForCode) + dir.typeLabels[code].travelMin;
-                if(eta < bestEta){ bestEta = eta; bestCode = code; }
-              }
-            });
-          }
+        // arrival-time comparison across types, if 2+ types have a travelMin configured
+        let bestCode = null, bestTime = null;
+        const withTravel = Object.entries(labels.type||{}).filter(([c,i])=>i.label && i.travelMin!=null);
+        if(withTravel.length>=2){
+          let bestEta = Infinity;
+          withTravel.forEach(([code])=>{
+            const nextForCode = filteredTimes.find(t=> codesForDay[t] && codesForDay[t].t===code && timeToMinutes(t)>=nowMin);
+            if(nextForCode){
+              const eta = timeToMinutes(nextForCode) + labels.type[code].travelMin;
+              if(eta < bestEta){ bestEta = eta; bestCode = code; bestTime = nextForCode; }
+            }
+          });
         }
         html += `<div class="dep-row">`;
         upcoming.forEach((t,i)=>{
           const diff = timeToMinutes(t)-nowMin;
-          const code = typeCodesForDay[t];
-          const typeInfo = code && dir.typeLabels ? dir.typeLabels[code] : null;
-          const isFastest = code && bestCode && code===bestCode && t===upcoming.find(x=>typeCodesForDay[x]===bestCode);
+          const c = codesForDay[t];
+          const typeInfo = c && c.t!=null && labels.type ? labels.type[c.t] : null;
+          const destInfo = c && c.d!=null && labels.dest ? labels.dest[c.d] : null;
+          const isFastest = bestTime!=null && t===bestTime;
           const cls = i===0 ? (diff<=3 ? 'dep soon' : 'dep next') : 'dep';
           let sub = '';
           if(i===0) sub += `<span class="dep-sub">あと${diff}分</span>`;
-          if(typeInfo && typeInfo.label) sub += `<span class="dep-sub" style="color:var(--teal);">${escapeHtml(typeInfo.label)}</span>`;
+          const tags = [typeInfo&&typeInfo.label, destInfo&&destInfo.label].filter(Boolean).join(' / ');
+          if(tags) sub += `<span class="dep-sub" style="color:var(--teal);">${escapeHtml(tags)}</span>`;
           if(isFastest && typeInfo && typeInfo.travelMin!=null){
             const etaMin = timeToMinutes(t)+typeInfo.travelMin;
             const etaStr = pad(Math.floor(etaMin/60)%24)+':'+pad(etaMin%60);
@@ -549,10 +554,10 @@ function renderBoards(){
 
   container.querySelectorAll('button[data-act="edit"]').forEach(b=> b.onclick = ()=> openStationSheet(b.dataset.id));
   container.querySelectorAll('button[data-act="resync"]').forEach(b=> b.onclick = ()=> resyncOdptStation(b.dataset.id));
-  container.querySelectorAll('[data-act="toggleType"]').forEach(chip=>{
+  container.querySelectorAll('[data-act="toggleFacet"]').forEach(chip=>{
     chip.onclick = ()=>{
-      const key = chip.dataset.filterkey, code = chip.dataset.code;
-      const set = typeFilterState[key];
+      const key = chip.dataset.filterkey, facet = chip.dataset.facet, code = chip.dataset.code;
+      const set = filterState[key][facet];
       if(set.has(code)) set.delete(code); else set.add(code);
       renderBoards();
     };
@@ -623,34 +628,55 @@ document.getElementById('btnUseCurrentLoc').onclick = ()=>{
 };
 
 /* ---- manual direction editor ---- */
+const FACETS = [
+  {key:'type', title:'種別（普通・急行など）', withTravel:true},
+  {key:'dest', title:'行き先（浦賀行き・逗子行きなど）', withTravel:false},
+];
+
 function renderDirList(){
   const wrap = document.getElementById('dirList');
   wrap.innerHTML = '';
   manualDirections.forEach((dir, idx)=>{
-    dir.typeCodes = dir.typeCodes || {};
-    dir.typeLabels = dir.typeLabels || {};
+    dir.codes = dir.codes || {};
+    dir.labels = dir.labels || {type:{}, dest:{}};
     const block = document.createElement('div');
     block.className = 'dir-block';
-    const codes = Object.keys(dir.typeLabels);
-    let typeEditorHtml = '';
-    if(codes.length){
-      typeEditorHtml = `<label style="margin-top:14px;">種別ラベル（このページで見えている色・アイコンと見比べて名前を付けてください）</label>`;
+
+    // find one representative example time per code, per facet, from whichever day has data
+    const exampleTimes = {type:{}, dest:{}};
+    Object.values(dir.codes).forEach(dayMap=>{
+      Object.entries(dayMap||{}).forEach(([t, c])=>{
+        if(c.t!=null && exampleTimes.type[c.t]==null) exampleTimes.type[c.t] = t;
+        if(c.d!=null && exampleTimes.dest[c.d]==null) exampleTimes.dest[c.d] = t;
+      });
+    });
+
+    let facetsHtml = '';
+    FACETS.forEach(facet=>{
+      const codes = Object.keys(dir.labels[facet.key]||{});
+      if(!codes.length) return;
+      facetsHtml += `<label style="margin-top:14px;">${facet.title}のラベル（例の時刻を実際のページで見比べて名前を付けてください）</label>`;
       codes.forEach(code=>{
-        const info = dir.typeLabels[code] || {label:'', travelMin:null};
-        typeEditorHtml += `
+        const info = dir.labels[facet.key][code] || {label:'', travelMin:null};
+        const example = exampleTimes[facet.key][code];
+        facetsHtml += `
           <div class="row2" style="margin-top:6px; align-items:end;">
             <div>
-              <label style="margin:0 0 4px;">コード${escapeHtml(code)}の種別名</label>
-              <input type="text" class="typeLabelInput" data-idx="${idx}" data-code="${code}" value="${escapeHtml(info.label||'')}" placeholder="例：急行">
+              <label style="margin:0 0 4px;">${example?`例：${example}発`:'コード'+escapeHtml(code)}</label>
+              <input type="text" class="labelInput" data-idx="${idx}" data-facet="${facet.key}" data-code="${code}" value="${escapeHtml(info.label||'')}" placeholder="${facet.key==='type'?'例：急行':'例：浦賀'}">
             </div>
+            ${facet.withTravel ? `
             <div>
               <label style="margin:0 0 4px;">目安所要分（任意）</label>
-              <input type="number" class="typeTravelInput" data-idx="${idx}" data-code="${code}" value="${info.travelMin!=null?info.travelMin:''}" placeholder="例：11">
-            </div>
+              <input type="number" class="travelInput" data-idx="${idx}" data-code="${code}" value="${info.travelMin!=null?info.travelMin:''}" placeholder="例：11">
+            </div>` : `<div></div>`}
           </div>`;
       });
-      typeEditorHtml += `<div class="hint">所要分を2種類以上入れておくと、発車標に「どちらが早く着くか」の目安が出るようになります。</div>`;
+    });
+    if(facetsHtml){
+      facetsHtml += `<div class="hint">種別・行き先とも、一度ラベルを付けるとこの端末で覚えて、次回以降は自動で名前が入ります。所要分を種別2つ以上に入れておくと、発車標に「どちらが早く着くか」の目安も出ます。</div>`;
     }
+
     block.innerHTML = `
       <button class="rm" data-idx="${idx}">✕</button>
       <label>方面名</label>
@@ -663,27 +689,31 @@ function renderDirList(){
       <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 京急ページのURLを貼り付けて取り込む（選択中の曜日区分に反映）</button>
       <label>発車時刻（カンマ区切り、例：06:03,06:15,06:32）</label>
       <textarea class="dirTimes" data-idx="${idx}" data-day="weekday">${(dir.timetables.weekday||[]).join(',')}</textarea>
-      ${typeEditorHtml}
+      ${facetsHtml}
     `;
     wrap.appendChild(block);
   });
   // events
   wrap.querySelectorAll('.rm').forEach(b=> b.onclick = ()=>{ manualDirections.splice(Number(b.dataset.idx),1); renderDirList(); });
   wrap.querySelectorAll('.dirLabel').forEach(inp=> inp.oninput = ()=>{ manualDirections[Number(inp.dataset.idx)].label = inp.value; });
-  wrap.querySelectorAll('.typeLabelInput').forEach(inp=>{
+  wrap.querySelectorAll('.labelInput').forEach(inp=>{
     inp.oninput = ()=>{
-      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+      const idx = Number(inp.dataset.idx), facet = inp.dataset.facet, code = inp.dataset.code;
       const dir = manualDirections[idx];
-      dir.typeLabels[code] = dir.typeLabels[code] || {label:'', travelMin:null};
-      dir.typeLabels[code].label = inp.value;
+      dir.labels[facet][code] = dir.labels[facet][code] || {label:'', travelMin:null};
+      dir.labels[facet][code].label = inp.value;
+      // remember for next time, across all stations
+      settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}};
+      settings.keikyuLabels[facet][code] = inp.value;
+      saveSettings();
     };
   });
-  wrap.querySelectorAll('.typeTravelInput').forEach(inp=>{
+  wrap.querySelectorAll('.travelInput').forEach(inp=>{
     inp.oninput = ()=>{
       const idx = Number(inp.dataset.idx), code = inp.dataset.code;
       const dir = manualDirections[idx];
-      dir.typeLabels[code] = dir.typeLabels[code] || {label:'', travelMin:null};
-      dir.typeLabels[code].travelMin = inp.value===''? null : Number(inp.value);
+      dir.labels.type[code] = dir.labels.type[code] || {label:'', travelMin:null};
+      dir.labels.type[code].travelMin = inp.value===''? null : Number(inp.value);
     };
   });
   wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
@@ -698,25 +728,37 @@ function renderDirList(){
       try{
         const data = await importKeikyuData(url);
         const dir = manualDirections[idx];
-        dir.typeCodes = dir.typeCodes || {};
-        dir.typeLabels = dir.typeLabels || {};
-        dir.typeCodes[day] = {};
+        dir.codes = dir.codes || {};
+        dir.labels = dir.labels || {type:{}, dest:{}};
+        settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}};
+        dir.codes[day] = {};
         const times = [];
         data.departures.forEach(d=>{
           times.push(d.time);
-          dir.typeCodes[day][d.time] = d.typeCode;
+          dir.codes[day][d.time] = {t:d.typeCode, d:d.destHex};
         });
         dir.timetables[day] = [...new Set(times)].sort();
+        let newCodes = 0;
         data.typeSummary.forEach(ts=>{
-          if(!dir.typeLabels[ts.code]) dir.typeLabels[ts.code] = {label:'', travelMin:null};
+          if(!dir.labels.type[ts.code]){
+            const known = settings.keikyuLabels.type[ts.code];
+            dir.labels.type[ts.code] = {label: known||'', travelMin:null};
+            if(!known) newCodes++;
+          }
         });
-        if(data.typeSummary.length > 1){
-          alert(`${data.typeSummary.length}種類の種別コードが見つかりました（下の「種別ラベル」欄で、それぞれ何行きの何という種別か名前を付けてください。サンプル時刻: ` +
-            data.typeSummary.map(ts=>`コード${ts.code}=${ts.samples.join('/')}など`).join('、') + `）`);
-        }
+        data.destSummary.forEach(ds=>{
+          if(!dir.labels.dest[ds.code]){
+            const known = settings.keikyuLabels.dest[ds.code];
+            dir.labels.dest[ds.code] = {label: known||''};
+            if(!known) newCodes++;
+          }
+        });
         renderDirList();
         const newTb = document.querySelector(`.tabbar[data-idx="${idx}"] .dayTab[data-day="${day}"]`);
         if(newTb) newTb.click();
+        if(newCodes>0){
+          alert('新しい種別・行き先コードが見つかりました。下の入力欄で、表示されている「例：◯時◯分発」を実際の京急のページと見比べて、名前を付けてください（一度付ければ次回から自動で入ります）。');
+        }
       }catch(e){
         alert('取り込みに失敗しました: '+e.message);
         btn.textContent = originalLabel;
@@ -746,7 +788,7 @@ function renderDirList(){
   });
 }
 document.getElementById('btnAddDir').onclick = ()=>{
-  manualDirections.push({label:'', timetables:{weekday:[],saturday:[],holiday:[]}, typeCodes:{}, typeLabels:{}});
+  manualDirections.push({label:'', timetables:{weekday:[],saturday:[],holiday:[]}, codes:{}, labels:{type:{}, dest:{}}});
   renderDirList();
 };
 
