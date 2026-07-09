@@ -514,6 +514,18 @@ function sortDestCodesByGroup(labels){
     return (labels[a].label||'').localeCompare(labels[b].label||'','ja');
   });
 }
+// Type display order: NEX (or similarly "special" branded types) shown first,
+// then the rest alphabetically.
+const TYPE_DISPLAY_PRIORITY = ['NEX','特急','快特','エアポート急行','急行','快速','普通'];
+function sortTypeCodesByPriority(labels){
+  return Object.keys(labels).sort((a,b)=>{
+    const la = labels[a].label||'', lb = labels[b].label||'';
+    const pa = TYPE_DISPLAY_PRIORITY.indexOf(la), pb = TYPE_DISPLAY_PRIORITY.indexOf(lb);
+    const ra = pa===-1?100:pa, rb = pb===-1?100:pb;
+    if(ra!==rb) return ra-rb;
+    return la.localeCompare(lb,'ja');
+  });
+}
 
 // Override the display label for specific type codes instead of using the
 // operator's legend text verbatim (e.g. show "NEX" rather than "成田エクスプレス").
@@ -627,7 +639,7 @@ function renderBoards(){
           }
         }
 
-        const chipCodes = facet.key==='dest' ? sortDestCodesByGroup(labels.dest||{}) : Object.keys(labels[facet.key]||{});
+        const chipCodes = facet.key==='dest' ? sortDestCodesByGroup(labels.dest||{}) : sortTypeCodesByPriority(labels.type||{});
         html += `<div class="chips" data-chipskey="${filterKey}::${facet.key}" style="margin:-2px 0 8px;">`;
         chipCodes.forEach(code=>{
           const info = labels[facet.key][code];
@@ -888,7 +900,7 @@ function renderDirList(){
       Object.entries((settings.keikyuLabels && settings.keikyuLabels.destGroups)||{}).forEach(([k,g])=>{ if(g && k.startsWith(prefix)) usedGroups.add(g); });
     }
     FACETS.forEach(facet=>{
-      const codes = facet.key==='dest' ? sortDestCodesByGroup(dir.labels.dest||{}) : Object.keys(dir.labels[facet.key]||{});
+      const codes = facet.key==='dest' ? sortDestCodesByGroup(dir.labels.dest||{}) : sortTypeCodesByPriority(dir.labels.type||{});
       if(!codes.length) return;
       facetsHtml += `<label style="margin-top:14px;">${facet.title}のラベル（例の時刻を実際のページで見比べて名前を付けてください）</label>`;
       codes.forEach(code=>{
