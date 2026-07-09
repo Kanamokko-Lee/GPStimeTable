@@ -269,9 +269,9 @@ textarea{min-height:64px; resize:vertical;}
       プロキシを設定すると、ODPT APIへのリクエストは <span class="mono">consumerKeyを除いたパス</span> を末尾に付けてこのURLに送られます（例：<span class="mono">{proxy}/odpt:Station?...</span>）。空欄なら api.odpt.org に直接アクセスします（CORSエラーが出る場合はプロキシが必要です）。
     </div>
 
-    <label>時刻表取込プロキシURL（京急ページの貼り付け取り込み用）</label>
-    <input type="text" id="cfgKeikyuProxyBase" placeholder="例：https://your-worker.workers.dev/keikyu-timetable">
-    <div class="hint">京急の時刻表ページ（norikae.keikyu.co.jp）をURLで貼り付けて取り込む機能に使うCloudflare WorkerのURLです。デプロイ方法は会話で共有したコードを参照してください。</div>
+    <label>時刻表取込プロキシURL（京急・JR東日本ページの貼り付け取り込み用）</label>
+    <input type="text" id="cfgKeikyuProxyBase" placeholder="例：https://your-worker.workers.dev/">
+    <div class="hint">京急（norikae.keikyu.co.jp）とJR東日本（timetables.jreast.co.jp）の時刻表ページをURLで貼り付けて取り込む機能に使うCloudflare WorkerのURLです。デプロイ方法は会話で共有したコードを参照してください。</div>
     <button class="btn" id="btnSaveSettings">保存</button>
     <div class="hint" style="margin-top:18px;">全データはこの端末のブラウザ内（localStorage）にのみ保存されます。他の端末とは自動同期されません。別端末に移す場合は下のエクスポート/インポートを使ってください。</div>
 
@@ -505,9 +505,13 @@ function sortDestCodesByGroup(labels){
 
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
+  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726', '成田エクスプレス':'#ffa726' },
 };
-function typeColorFor(label){
+function typeColorFor(label, preferredSource){
   if(!label) return null;
+  if(preferredSource && TYPE_COLOR_PRESETS[preferredSource] && TYPE_COLOR_PRESETS[preferredSource][label]){
+    return TYPE_COLOR_PRESETS[preferredSource][label];
+  }
   for(const preset of Object.values(TYPE_COLOR_PRESETS)){
     if(preset[label]) return preset[label];
   }
@@ -650,7 +654,7 @@ function renderBoards(){
           if(diffSeconds<=30){ color='var(--board-soon)'; blink=true; }
           else if(diffSeconds<=60){ color='var(--board-soon)'; }
           else if(diffSeconds<=180){ color='#ffd23f'; }
-          else { color = typeColorFor(typeInfo&&typeInfo.label) || 'var(--board-dim)'; }
+          else { color = typeColorFor(typeInfo&&typeInfo.label, dir.importSource) || 'var(--board-dim)'; }
 
           let countdownText = `あと${diffMin}分`;
           if(isFastest && typeInfo && typeInfo.travelMin!=null){
@@ -666,9 +670,9 @@ function renderBoards(){
           }
 
           html += `<div class="dep-card">
-            <span class="dep-time mono${blink?' blink':''}" style="color:${color};" data-time="${t}" data-typelabel="${escapeHtml((typeInfo&&typeInfo.label)||'')}">${t}</span>
+            <span class="dep-time mono${blink?' blink':''}" style="color:${color};" data-time="${t}" data-typelabel="${escapeHtml((typeInfo&&typeInfo.label)||'')}" data-source="${escapeHtml(dir.importSource||'')}">${t}</span>
             <span class="dep-line dest">${destInfo&&destInfo.label?escapeHtml(destInfo.label):'&nbsp;'}</span>
-            <span class="dep-line" style="${typeInfo&&typeInfo.label?('color:'+(typeColorFor(typeInfo.label)||'var(--muted)')+';'):''}">${typeInfo&&typeInfo.label?escapeHtml(typeInfo.label):'&nbsp;'}</span>
+            <span class="dep-line" style="${typeInfo&&typeInfo.label?('color:'+(typeColorFor(typeInfo.label, dir.importSource)||'var(--muted)')+';'):''}">${typeInfo&&typeInfo.label?escapeHtml(typeInfo.label):'&nbsp;'}</span>
             <span class="dep-line" data-countdown data-eta-suffix="${isFastest && typeInfo && typeInfo.travelMin!=null ? escapeHtml(countdownText.replace(/^★あと\d+分\s*/,'')) : ''}" data-fastest="${isFastest?'1':''}">${countdownText}</span>
             <span class="dep-line">${destEtaLine}</span>
           </div>`;
@@ -732,7 +736,7 @@ function updateLiveDepartureStyles(){
     if(diffSeconds<=30){ color='var(--board-soon)'; blink=true; }
     else if(diffSeconds<=60){ color='var(--board-soon)'; }
     else if(diffSeconds<=180){ color='#ffd23f'; }
-    else { color = typeColorFor(typeLabel) || 'var(--board-dim)'; }
+    else { color = typeColorFor(typeLabel, el.dataset.source) || 'var(--board-dim)'; }
     el.style.color = color;
     el.classList.toggle('blink', blink);
 
@@ -897,7 +901,7 @@ function renderDirList(){
         <button data-day="saturday" class="dayTab">土曜</button>
         <button data-day="holiday" class="dayTab">日祝</button>
       </div>
-      <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 京急ページのURLを貼り付けて取り込む（平日・土曜・日祝を自動でまとめて取得）</button>
+      <button class="small-link" data-idx="${idx}" data-act="importKeikyu" type="button">📋 時刻表ページのURLを貼り付けて取り込む（京急・JR東日本対応／平日・土曜・日祝を自動でまとめて取得）</button>
       <label>発車時刻（カンマ区切り、例：06:03,06:15,06:32）</label>
       <textarea class="dirTimes" data-idx="${idx}" data-day="weekday">${(dir.timetables.weekday||[]).join(',')}</textarea>
       ${facetsHtml}
@@ -975,7 +979,7 @@ function renderDirList(){
   wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
     btn.onclick = async ()=>{
       const idx = Number(btn.dataset.idx);
-      const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n平日・土曜・日祝は自動でまとめて取り込みます。');
+      const url = prompt('時刻表ページのURLを貼り付けてください（京急 norikae.keikyu.co.jp / JR東日本 timetables.jreast.co.jp に対応）。\n平日・土曜・日祝は自動でまとめて取り込みます。');
       if(!url) return;
       const originalLabel = btn.textContent;
       btn.textContent = '取り込み中…（3曜日区分を確認しています）';
@@ -984,6 +988,7 @@ function renderDirList(){
         const dir = manualDirections[idx];
         dir.codes = dir.codes || {};
         dir.labels = dir.labels || {type:{}, dest:{}};
+        try{ dir.importSource = new URL(url).hostname.includes('jreast') ? 'jreast' : 'keikyu'; }catch(e){}
         settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}};
         let newCodes = 0;
         const gotDays = [];
