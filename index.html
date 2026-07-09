@@ -97,7 +97,7 @@ header{display:flex; align-items:center; justify-content:space-between; margin-b
 .direction-label{font-size:12px; color:var(--teal); font-weight:500; margin-bottom:6px; display:flex; justify-content:space-between;}
 .direction-label .edit-link{color:var(--muted); cursor:pointer; text-decoration:underline; font-size:11px;}
 .dep-grid{
-  display:flex; flex-wrap:nowrap; overflow-x:auto; gap:14px 20px; padding-bottom:6px;
+  display:flex; flex-wrap:nowrap; overflow-x:auto; gap:14px 34px; padding-bottom:6px;
   -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity;
 }
 .dep-card{scroll-snap-align:start;}
@@ -465,7 +465,10 @@ function renderBoards(){
   // preserve horizontal scroll position of each direction's departure strip across rebuilds
   const scrollPositions = {};
   container.querySelectorAll('.dep-grid[data-gridkey]').forEach(el=>{
-    scrollPositions[el.dataset.gridkey] = el.scrollLeft;
+    scrollPositions['grid::'+el.dataset.gridkey] = el.scrollLeft;
+  });
+  container.querySelectorAll('.chips[data-chipskey]').forEach(el=>{
+    scrollPositions['chips::'+el.dataset.chipskey] = el.scrollLeft;
   });
   container.innerHTML = '';
   const badge = document.getElementById('dayTypeBadge');
@@ -509,7 +512,7 @@ function renderBoards(){
         if(!hasFacetLabels(facet.key)) return;
         if(!filterState[filterKey][facet.key]) filterState[filterKey][facet.key] = new Set(Object.keys(labels[facet.key]));
         const active = filterState[filterKey][facet.key];
-        html += `<div class="chips" style="margin:-2px 0 8px;">`;
+        html += `<div class="chips" data-chipskey="${filterKey}::${facet.key}" style="margin:-2px 0 8px;">`;
         Object.entries(labels[facet.key]).forEach(([code, info])=>{
           if(!info.label) return;
           const isActive = active.has(code);
@@ -609,7 +612,12 @@ function renderBoards(){
     };
   });
   container.querySelectorAll('.dep-grid[data-gridkey]').forEach(el=>{
-    if(scrollPositions[el.dataset.gridkey]!=null) el.scrollLeft = scrollPositions[el.dataset.gridkey];
+    const v = scrollPositions['grid::'+el.dataset.gridkey];
+    if(v!=null) el.scrollLeft = v;
+  });
+  container.querySelectorAll('.chips[data-chipskey]').forEach(el=>{
+    const v = scrollPositions['chips::'+el.dataset.chipskey];
+    if(v!=null) el.scrollLeft = v;
   });
 }
 
