@@ -456,11 +456,22 @@ const KEIKYU_DEST_GROUP_GUESS = {
   '新橋':'都内・千葉方面', '日本橋':'都内・千葉方面', '押上':'都内・千葉方面', 'スカイツリー':'都内・千葉方面',
   '京成高砂':'都内・千葉方面', '印旛日本医大':'都内・千葉方面', '成田空港':'都内・千葉方面', '空港第2ビル':'都内・千葉方面',
   '羽田空港第1・第2ターミナル':'都内・千葉方面', '羽田空港第3ターミナル':'都内・千葉方面', '羽田空港':'都内・千葉方面',
+  '印西牧の原':'都内・千葉方面', '京成佐倉':'都内・千葉方面', '宗吾参道':'都内・千葉方面',
   '横浜':'横浜方面', '上大岡':'横浜方面', '金沢文庫':'横浜方面', '金沢八景':'横浜方面',
   '新逗子':'横浜方面', '逗子・葉山':'横浜方面', '三崎口':'横浜方面', '浦賀':'横浜方面',
   '京急久里浜':'横浜方面', '汐入':'横浜方面', '横須賀中央':'横浜方面', '堀ノ内':'横浜方面',
+  '神奈川新町':'横浜方面', '京急川崎':'横浜方面',
 };
-function guessDestGroup(label){ return KEIKYU_DEST_GROUP_GUESS[label] || ''; }
+// substring rules, checked when no exact match is found
+const KEIKYU_DEST_GROUP_GUESS_CONTAINS = [
+  {contains:'成田', group:'都内・千葉方面'},
+];
+function guessDestGroup(label){
+  if(!label) return '';
+  if(KEIKYU_DEST_GROUP_GUESS[label]) return KEIKYU_DEST_GROUP_GUESS[label];
+  const hit = KEIKYU_DEST_GROUP_GUESS_CONTAINS.find(r=>label.includes(r.contains));
+  return hit ? hit.group : '';
+}
 
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
@@ -773,6 +784,12 @@ function renderDirList(){
   manualDirections.forEach((dir, idx)=>{
     dir.codes = dir.codes || {};
     dir.labels = dir.labels || {type:{}, dest:{}};
+    Object.entries(dir.labels.dest||{}).forEach(([code, info])=>{
+      if(info.label && !info.group){
+        const guess = guessDestGroup(info.label);
+        if(guess) info.group = guess;
+      }
+    });
     const block = document.createElement('div');
     block.className = 'dir-block';
 
@@ -806,8 +823,8 @@ function renderDirList(){
             </div>` : `
             <div>
               <label style="margin:0 0 4px;">グループ</label>
-              <select class="groupInput" data-idx="${idx}" data-code="${code}">
-                <option value="" ${!info.group?'selected':''}>未設定</option>
+              <select class="groupInput" data-idx="${idx}" data-code="${code}" style="${!info.group?'border-color:var(--board); color:var(--board);':''}">
+                <option value="" style="color:var(--board);" ${!info.group?'selected':''}>未設定</option>
                 <option value="都内・千葉方面" ${info.group==='都内・千葉方面'?'selected':''}>都内・千葉方面</option>
                 <option value="横浜方面" ${info.group==='横浜方面'?'selected':''}>横浜方面</option>
                 ${info.group && info.group!=='都内・千葉方面' && info.group!=='横浜方面' ? `<option value="${escapeHtml(info.group)}" selected>${escapeHtml(info.group)}</option>` : ''}
