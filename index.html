@@ -472,6 +472,11 @@ const KEIKYU_DEST_GROUP_GUESS_CONTAINS = [
   {contains:'成田', group:'都内・千葉方面'},
   {contains:'大船', group:'大船・久里浜方面'},
 ];
+// Scope remembered labels/groups by operator+code, since raw codes (often a
+// single abbreviation letter) are not unique across operators — e.g. Keikyu's
+// and JR's own single-letter destination codes can coincidentally collide.
+function remKey(dir, code){ return (dir.importSource||'manual') + ':' + code; }
+
 function guessDestGroup(label){
   if(!label) return '';
   if(KEIKYU_DEST_GROUP_GUESS[label]) return KEIKYU_DEST_GROUP_GUESS[label];
@@ -860,7 +865,8 @@ function renderDirList(){
     const usedGroups = new Set();
     Object.values(dir.labels.dest||{}).forEach(info=>{ if(info.group) usedGroups.add(info.group); });
     if(usedGroups.size===0){
-      Object.values((settings.keikyuLabels && settings.keikyuLabels.destGroups)||{}).forEach(g=>{ if(g) usedGroups.add(g); });
+      const prefix = (dir.importSource||'manual')+':';
+      Object.entries((settings.keikyuLabels && settings.keikyuLabels.destGroups)||{}).forEach(([k,g])=>{ if(g && k.startsWith(prefix)) usedGroups.add(g); });
     }
     FACETS.forEach(facet=>{
       const codes = facet.key==='dest' ? sortDestCodesByGroup(dir.labels.dest||{}) : Object.keys(dir.labels[facet.key]||{});
@@ -933,7 +939,7 @@ function renderDirList(){
       dir.labels[facet][code].label = inp.value;
       // remember for next time, across all stations
       settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}};
-      settings.keikyuLabels[facet][code] = inp.value;
+      settings.keikyuLabels[facet][remKey(dir, code)] = inp.value;
       saveSettings();
     };
   });
@@ -958,7 +964,7 @@ function renderDirList(){
       dir.labels.dest[code].group = value;
       settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}};
       settings.keikyuLabels.destGroups = settings.keikyuLabels.destGroups || {};
-      settings.keikyuLabels.destGroups[code] = value;
+      settings.keikyuLabels.destGroups[remKey(dir, code)] = value;
       saveSettings();
       renderDirList();
       stationSheetDirty = true;
@@ -972,8 +978,8 @@ function renderDirList(){
       dir.labels.dest[code].etaLabel = inp.value;
       settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}, destEta:{}};
       settings.keikyuLabels.destEta = settings.keikyuLabels.destEta || {};
-      settings.keikyuLabels.destEta[code] = settings.keikyuLabels.destEta[code] || {};
-      settings.keikyuLabels.destEta[code].etaLabel = inp.value;
+      settings.keikyuLabels.destEta[remKey(dir, code)] = settings.keikyuLabels.destEta[remKey(dir, code)] || {};
+      settings.keikyuLabels.destEta[remKey(dir, code)].etaLabel = inp.value;
       saveSettings();
     };
   });
@@ -985,8 +991,8 @@ function renderDirList(){
       dir.labels.dest[code].etaMin = inp.value===''? null : Number(inp.value);
       settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}, destEta:{}};
       settings.keikyuLabels.destEta = settings.keikyuLabels.destEta || {};
-      settings.keikyuLabels.destEta[code] = settings.keikyuLabels.destEta[code] || {};
-      settings.keikyuLabels.destEta[code].etaMin = dir.labels.dest[code].etaMin;
+      settings.keikyuLabels.destEta[remKey(dir, code)] = settings.keikyuLabels.destEta[remKey(dir, code)] || {};
+      settings.keikyuLabels.destEta[remKey(dir, code)].etaMin = dir.labels.dest[code].etaMin;
       saveSettings();
     };
   });
@@ -1018,24 +1024,24 @@ function renderDirList(){
           dayData.typeSummary.forEach(ts=>{
             if(!dir.labels.type[ts.code]){
               const auto = (TYPE_LABEL_OVERRIDE[ts.code]) || (dayData.typeLegend && dayData.typeLegend[ts.code]);
-              const known = settings.keikyuLabels.type[ts.code];
+              const known = settings.keikyuLabels.type[remKey(dir, ts.code)];
               dir.labels.type[ts.code] = {label: auto||known||'', travelMin:null};
-              if(auto) settings.keikyuLabels.type[ts.code] = auto;
+              if(auto) settings.keikyuLabels.type[remKey(dir, ts.code)] = auto;
               if(!auto && !known) newCodes++;
             }
           });
           dayData.destSummary.forEach(ds=>{
             if(!dir.labels.dest[ds.code]){
               const auto = dayData.destLegend && dayData.destLegend[ds.code];
-              const known = settings.keikyuLabels.dest[ds.code];
+              const known = settings.keikyuLabels.dest[remKey(dir, ds.code)];
               const finalLabel = auto||known||'';
-              const knownGroup = (settings.keikyuLabels.destGroups && settings.keikyuLabels.destGroups[ds.code]) || guessDestGroup(finalLabel);
-              const knownEta = (settings.keikyuLabels.destEta && settings.keikyuLabels.destEta[ds.code]) || {};
+              const knownGroup = (settings.keikyuLabels.destGroups && settings.keikyuLabels.destGroups[remKey(dir, ds.code)]) || guessDestGroup(finalLabel);
+              const knownEta = (settings.keikyuLabels.destEta && settings.keikyuLabels.destEta[remKey(dir, ds.code)]) || {};
               dir.labels.dest[ds.code] = {label: finalLabel, group: knownGroup, etaLabel: knownEta.etaLabel||'', etaMin: knownEta.etaMin!=null?knownEta.etaMin:null};
-              if(auto) settings.keikyuLabels.dest[ds.code] = auto;
+              if(auto) settings.keikyuLabels.dest[remKey(dir, ds.code)] = auto;
               if(knownGroup){
                 settings.keikyuLabels.destGroups = settings.keikyuLabels.destGroups || {};
-                settings.keikyuLabels.destGroups[ds.code] = knownGroup;
+                settings.keikyuLabels.destGroups[remKey(dir, ds.code)] = knownGroup;
               }
               if(!auto && !known) newCodes++;
             }
