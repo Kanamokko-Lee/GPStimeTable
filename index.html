@@ -322,7 +322,7 @@ function loadStations(){
 }
 function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
 function loadSettings(){
-  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}}}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}}}; }
+  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}, destEta:{}}}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}, destEta:{}}}; }
 }
 function saveSettings(){ localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); }
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
@@ -480,10 +480,25 @@ function groupPriority(groupName){
   const i = GROUP_DISPLAY_PRIORITY.indexOf(groupName);
   return i===-1 ? 50 : i;
 }
+// Within a group, some destinations matter more than others regardless of station —
+// e.g. for 横浜方面, 逗子・葉山-bound trains should always show first, then 金沢文庫-bound.
+// Unlisted destinations keep their alphabetical order after the listed ones.
+const DEST_DISPLAY_PRIORITY_WITHIN_GROUP = {
+  '横浜方面': ['逗子・葉山','金沢文庫','金沢八景','三崎口','浦賀','横須賀中央','汐入','堀ノ内','京急久里浜','上大岡','横浜'],
+};
+function destPriorityWithinGroup(group, label){
+  const list = DEST_DISPLAY_PRIORITY_WITHIN_GROUP[group];
+  if(!list) return 100;
+  const i = list.indexOf(label);
+  return i===-1 ? 100 : i;
+}
 function sortDestCodesByGroup(labels){
   return Object.keys(labels).sort((a,b)=>{
-    const pa = groupPriority(labels[a].group), pb = groupPriority(labels[b].group);
+    const ga = labels[a].group, gb = labels[b].group;
+    const pa = groupPriority(ga), pb = groupPriority(gb);
     if(pa!==pb) return pa-pb;
+    const wa = destPriorityWithinGroup(ga, labels[a].label), wb = destPriorityWithinGroup(gb, labels[b].label);
+    if(wa!==wb) return wa-wb;
     return (labels[a].label||'').localeCompare(labels[b].label||'','ja');
   });
 }
@@ -643,12 +658,19 @@ function renderBoards(){
             const etaStr = pad(Math.floor(etaMin/60)%24)+':'+pad(etaMin%60);
             countdownText = `★${countdownText} 着${etaStr}`;
           }
+          let destEtaLine = '&nbsp;';
+          if(destInfo && destInfo.etaLabel && destInfo.etaMin!=null){
+            const arrMin = timeToMinutes(t) + destInfo.etaMin;
+            const arrStr = pad(Math.floor(arrMin/60)%24)+':'+pad(arrMin%60);
+            destEtaLine = `${escapeHtml(destInfo.etaLabel)} ${arrStr}`;
+          }
 
           html += `<div class="dep-card">
             <span class="dep-time mono${blink?' blink':''}" style="color:${color};" data-time="${t}" data-typelabel="${escapeHtml((typeInfo&&typeInfo.label)||'')}">${t}</span>
             <span class="dep-line dest">${destInfo&&destInfo.label?escapeHtml(destInfo.label):'&nbsp;'}</span>
             <span class="dep-line" style="${typeInfo&&typeInfo.label?('color:'+(typeColorFor(typeInfo.label)||'var(--muted)')+';'):''}">${typeInfo&&typeInfo.label?escapeHtml(typeInfo.label):'&nbsp;'}</span>
             <span class="dep-line" data-countdown data-eta-suffix="${isFastest && typeInfo && typeInfo.travelMin!=null ? escapeHtml(countdownText.replace(/^★あと\d+分\s*/,'')) : ''}" data-fastest="${isFastest?'1':''}">${countdownText}</span>
+            <span class="dep-line">${destEtaLine}</span>
           </div>`;
         });
         html += `</div>`;
@@ -848,12 +870,22 @@ function renderDirList(){
                 ${info.group && info.group!=='都内・千葉方面' && info.group!=='横浜方面' ? `<option value="${escapeHtml(info.group)}" selected>${escapeHtml(info.group)}</option>` : ''}
                 <option value="__custom__">その他（自由入力）…</option>
               </select>
+            </div>
+            <div class="row2" style="grid-column:1/-1; margin-top:6px;">
+              <div>
+                <label style="margin:0 0 4px;">到着／乗換ラベル（任意）</label>
+                <input type="text" class="etaLabelInput" data-idx="${idx}" data-code="${code}" value="${escapeHtml(info.etaLabel||'')}" placeholder="例：逗子・葉山着 / 金沢文庫 乗換想定">
+              </div>
+              <div>
+                <label style="margin:0 0 4px;">所要分</label>
+                <input type="number" class="etaMinInput" data-idx="${idx}" data-code="${code}" value="${info.etaMin!=null?info.etaMin:''}" placeholder="例：18">
+              </div>
             </div>`}
           </div>`;
       });
     });
     if(facetsHtml){
-      facetsHtml += `<div class="hint">種別・行き先とも、一度ラベルを付けるとこの端末で覚えて、次回以降は自動で名前が入ります。所要分を種別2つ以上に入れておくと、発車標に「どちらが早く着くか」の目安も出ます。行き先に同じグループ名を付けると、発車標でそのグループをまとめてON/OFFできるボタンが出ます。</div>`;
+      facetsHtml += `<div class="hint">種別・行き先とも、一度ラベルを付けるとこの端末で覚えて、次回以降は自動で名前が入ります。所要分を種別2つ以上に入れておくと、発車標に「どちらが早く着くか」の目安も出ます。行き先に同じグループ名を付けると、発車標でそのグループをまとめてON/OFFできるボタンが出ます。行き先の「到着／乗換ラベル」と「所要分」を入れておくと、発車標の「あと◯分」の下に到着・乗換の見込み時刻が表示されます（例：浦賀行きなら「金沢文庫 乗換想定」＋所要分、逗子・葉山行きなら「逗子・葉山着」＋所要分）。</div>`;
     }
 
     block.innerHTML = `
@@ -914,7 +946,32 @@ function renderDirList(){
       stationSheetDirty = true;
     };
   });
-  wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
+  wrap.querySelectorAll('.etaLabelInput').forEach(inp=>{
+    inp.oninput = ()=>{
+      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+      const dir = manualDirections[idx];
+      dir.labels.dest[code] = dir.labels.dest[code] || {label:'', group:''};
+      dir.labels.dest[code].etaLabel = inp.value;
+      settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}, destEta:{}};
+      settings.keikyuLabels.destEta = settings.keikyuLabels.destEta || {};
+      settings.keikyuLabels.destEta[code] = settings.keikyuLabels.destEta[code] || {};
+      settings.keikyuLabels.destEta[code].etaLabel = inp.value;
+      saveSettings();
+    };
+  });
+  wrap.querySelectorAll('.etaMinInput').forEach(inp=>{
+    inp.oninput = ()=>{
+      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+      const dir = manualDirections[idx];
+      dir.labels.dest[code] = dir.labels.dest[code] || {label:'', group:''};
+      dir.labels.dest[code].etaMin = inp.value===''? null : Number(inp.value);
+      settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}, destEta:{}};
+      settings.keikyuLabels.destEta = settings.keikyuLabels.destEta || {};
+      settings.keikyuLabels.destEta[code] = settings.keikyuLabels.destEta[code] || {};
+      settings.keikyuLabels.destEta[code].etaMin = dir.labels.dest[code].etaMin;
+      saveSettings();
+    };
+  });
     btn.onclick = async ()=>{
       const idx = Number(btn.dataset.idx);
       const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n平日・土曜・日祝は自動でまとめて取り込みます。');
@@ -953,7 +1010,8 @@ function renderDirList(){
               const known = settings.keikyuLabels.dest[ds.code];
               const finalLabel = auto||known||'';
               const knownGroup = (settings.keikyuLabels.destGroups && settings.keikyuLabels.destGroups[ds.code]) || guessDestGroup(finalLabel);
-              dir.labels.dest[ds.code] = {label: finalLabel, group: knownGroup};
+              const knownEta = (settings.keikyuLabels.destEta && settings.keikyuLabels.destEta[ds.code]) || {};
+              dir.labels.dest[ds.code] = {label: finalLabel, group: knownGroup, etaLabel: knownEta.etaLabel||'', etaMin: knownEta.etaMin!=null?knownEta.etaMin:null};
               if(auto) settings.keikyuLabels.dest[ds.code] = auto;
               if(knownGroup){
                 settings.keikyuLabels.destGroups = settings.keikyuLabels.destGroups || {};
