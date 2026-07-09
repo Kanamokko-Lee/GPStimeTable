@@ -520,8 +520,24 @@ function sortDestCodesByGroup(labels){
 const TYPE_LABEL_OVERRIDE = { 'NEX':'NEX' };
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
-  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726', 'NEX':'#ff3b30' },
+  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726' },
 };
+// Some types get a border highlight instead of (or in addition to) a text color —
+// this stays visible as "this is a NEX" regardless of the urgency-driven text
+// color (red when soon, yellow when 3 min out), instead of competing with it.
+const TYPE_BORDER_PRESETS = {
+  jreast: { 'NEX':'#ff3b30' },
+};
+function typeBorderFor(label, preferredSource){
+  if(!label) return null;
+  if(preferredSource && TYPE_BORDER_PRESETS[preferredSource] && TYPE_BORDER_PRESETS[preferredSource][label]){
+    return TYPE_BORDER_PRESETS[preferredSource][label];
+  }
+  for(const preset of Object.values(TYPE_BORDER_PRESETS)){
+    if(preset[label]) return preset[label];
+  }
+  return null;
+}
 function typeColorFor(label, preferredSource){
   if(!label) return null;
   if(preferredSource && TYPE_COLOR_PRESETS[preferredSource] && TYPE_COLOR_PRESETS[preferredSource][label]){
@@ -684,7 +700,10 @@ function renderBoards(){
             destEtaLine = `${escapeHtml(destInfo.etaLabel)} ${arrStr}`;
           }
 
-          html += `<div class="dep-card">
+          const borderColor = typeBorderFor(typeInfo&&typeInfo.label, dir.importSource);
+          const cardStyle = borderColor ? `border:2px solid ${borderColor}; border-radius:10px; padding:6px 8px;` : '';
+
+          html += `<div class="dep-card" style="${cardStyle}">
             <span class="dep-time mono${blink?' blink':''}" style="color:${color};" data-time="${t}" data-typelabel="${escapeHtml((typeInfo&&typeInfo.label)||'')}" data-source="${escapeHtml(dir.importSource||'')}">${t}</span>
             <span class="dep-line dest">${destInfo&&destInfo.label?escapeHtml(destInfo.label):'&nbsp;'}</span>
             <span class="dep-line" style="${typeInfo&&typeInfo.label?('color:'+(typeColorFor(typeInfo.label, dir.importSource)||'var(--muted)')+';'):''}">${typeInfo&&typeInfo.label?escapeHtml(typeInfo.label):'&nbsp;'}</span>
