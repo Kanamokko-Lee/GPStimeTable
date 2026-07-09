@@ -972,6 +972,7 @@ function renderDirList(){
       saveSettings();
     };
   });
+  wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
     btn.onclick = async ()=>{
       const idx = Number(btn.dataset.idx);
       const url = prompt('京急の時刻表ページURL（norikae.keikyu.co.jp）を貼り付けてください。\n平日・土曜・日祝は自動でまとめて取り込みます。');
