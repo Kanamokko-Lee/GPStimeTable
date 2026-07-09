@@ -472,6 +472,21 @@ function guessDestGroup(label){
   const hit = KEIKYU_DEST_GROUP_GUESS_CONTAINS.find(r=>label.includes(r.contains));
   return hit ? hit.group : '';
 }
+// Display order for groups/destinations: Yokohama-bound first, then Tokyo/Chiba-bound,
+// then any other custom group, then ungrouped last.
+const GROUP_DISPLAY_PRIORITY = ['横浜方面','都内・千葉方面'];
+function groupPriority(groupName){
+  if(!groupName) return 100;
+  const i = GROUP_DISPLAY_PRIORITY.indexOf(groupName);
+  return i===-1 ? 50 : i;
+}
+function sortDestCodesByGroup(labels){
+  return Object.keys(labels).sort((a,b)=>{
+    const pa = groupPriority(labels[a].group), pb = groupPriority(labels[b].group);
+    if(pa!==pb) return pa-pb;
+    return (labels[a].label||'').localeCompare(labels[b].label||'','ja');
+  });
+}
 
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
@@ -551,9 +566,10 @@ function renderBoards(){
 
         if(facet.key==='dest'){
           const groups = computeGroups(labels.dest);
-          if(Object.keys(groups).length){
+          const sortedGroupEntries = Object.entries(groups).sort((a,b)=>groupPriority(a[0])-groupPriority(b[0]));
+          if(sortedGroupEntries.length){
             html += `<div class="chips" data-chipskey="${filterKey}::destGroups" style="margin:-2px 0 4px;">`;
-            Object.entries(groups).forEach(([groupName, codes])=>{
+            sortedGroupEntries.forEach(([groupName, codes])=>{
               const anyActive = codes.some(c=>active.has(c));
               html += `<div class="chip${anyActive?' active':''}" data-act="toggleGroup" data-filterkey="${filterKey}" data-facet="${facet.key}" data-codes="${codes.join(',')}" style="padding:6px 12px; font-size:12px;"><span class="dot"></span>${escapeHtml(groupName)}</div>`;
             });
@@ -561,8 +577,10 @@ function renderBoards(){
           }
         }
 
+        const chipCodes = facet.key==='dest' ? sortDestCodesByGroup(labels.dest||{}) : Object.keys(labels[facet.key]||{});
         html += `<div class="chips" data-chipskey="${filterKey}::${facet.key}" style="margin:-2px 0 8px;">`;
-        Object.entries(labels[facet.key]).forEach(([code, info])=>{
+        chipCodes.forEach(code=>{
+          const info = labels[facet.key][code];
           if(!info.label) return;
           const isActive = active.has(code);
           html += `<div class="chip${isActive?' active':''}" data-act="toggleFacet" data-filterkey="${filterKey}" data-facet="${facet.key}" data-code="${code}" style="padding:6px 12px; font-size:12px;"><span class="dot"></span>${escapeHtml(info.label)}</div>`;
@@ -804,7 +822,7 @@ function renderDirList(){
 
     let facetsHtml = '';
     FACETS.forEach(facet=>{
-      const codes = Object.keys(dir.labels[facet.key]||{});
+      const codes = facet.key==='dest' ? sortDestCodesByGroup(dir.labels.dest||{}) : Object.keys(dir.labels[facet.key]||{});
       if(!codes.length) return;
       facetsHtml += `<label style="margin-top:14px;">${facet.title}のラベル（例の時刻を実際のページで見比べて名前を付けてください）</label>`;
       codes.forEach(code=>{
