@@ -470,6 +470,7 @@ const KEIKYU_DEST_GROUP_GUESS = {
 // substring rules, checked when no exact match is found
 const KEIKYU_DEST_GROUP_GUESS_CONTAINS = [
   {contains:'成田', group:'都内・千葉方面'},
+  {contains:'大船', group:'大船・久里浜方面'},
 ];
 function guessDestGroup(label){
   if(!label) return '';
@@ -509,9 +510,12 @@ function sortDestCodesByGroup(labels){
   });
 }
 
+// Override the display label for specific type codes instead of using the
+// operator's legend text verbatim (e.g. show "NEX" rather than "成田エクスプレス").
+const TYPE_LABEL_OVERRIDE = { 'NEX':'NEX' };
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
-  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726', '成田エクスプレス':'#ff3b30' },
+  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726', 'NEX':'#ff3b30' },
 };
 function typeColorFor(label, preferredSource){
   if(!label) return null;
@@ -853,6 +857,11 @@ function renderDirList(){
     });
 
     let facetsHtml = '';
+    const usedGroups = new Set();
+    Object.values(dir.labels.dest||{}).forEach(info=>{ if(info.group) usedGroups.add(info.group); });
+    if(usedGroups.size===0){
+      Object.values((settings.keikyuLabels && settings.keikyuLabels.destGroups)||{}).forEach(g=>{ if(g) usedGroups.add(g); });
+    }
     FACETS.forEach(facet=>{
       const codes = facet.key==='dest' ? sortDestCodesByGroup(dir.labels.dest||{}) : Object.keys(dir.labels[facet.key]||{});
       if(!codes.length) return;
@@ -875,9 +884,8 @@ function renderDirList(){
               <label style="margin:0 0 4px;">グループ</label>
               <select class="groupInput" data-idx="${idx}" data-code="${code}" style="${!info.group?'border-color:var(--board); color:var(--board);':''}">
                 <option value="" style="color:var(--board);" ${!info.group?'selected':''}>未設定</option>
-                <option value="都内・千葉方面" ${info.group==='都内・千葉方面'?'selected':''}>都内・千葉方面</option>
-                <option value="横浜方面" ${info.group==='横浜方面'?'selected':''}>横浜方面</option>
-                ${info.group && info.group!=='都内・千葉方面' && info.group!=='横浜方面' ? `<option value="${escapeHtml(info.group)}" selected>${escapeHtml(info.group)}</option>` : ''}
+                ${[...usedGroups].map(g=>`<option value="${escapeHtml(g)}" ${info.group===g?'selected':''}>${escapeHtml(g)}</option>`).join('')}
+                ${info.group && !usedGroups.has(info.group) ? `<option value="${escapeHtml(info.group)}" selected>${escapeHtml(info.group)}</option>` : ''}
                 <option value="__custom__">その他（自由入力）…</option>
               </select>
             </div>
@@ -1009,7 +1017,7 @@ function renderDirList(){
           dir.timetables[day] = [...new Set(times)].sort();
           dayData.typeSummary.forEach(ts=>{
             if(!dir.labels.type[ts.code]){
-              const auto = dayData.typeLegend && dayData.typeLegend[ts.code];
+              const auto = (TYPE_LABEL_OVERRIDE[ts.code]) || (dayData.typeLegend && dayData.typeLegend[ts.code]);
               const known = settings.keikyuLabels.type[ts.code];
               dir.labels.type[ts.code] = {label: auto||known||'', travelMin:null};
               if(auto) settings.keikyuLabels.type[ts.code] = auto;
