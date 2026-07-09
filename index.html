@@ -322,7 +322,7 @@ function loadStations(){
 }
 function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
 function loadSettings(){
-  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}}}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}}}; }
+  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}}}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}}}; }
 }
 function saveSettings(){ localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); }
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
@@ -508,10 +508,34 @@ function renderBoards(){
 
       html += `<div class="direction"><div class="direction-label"><span>${escapeHtml(dir.label)}</span></div>`;
 
+      function computeGroups(labels){
+        const groups = {};
+        Object.entries(labels).forEach(([code, info])=>{
+          if(!info.label || !info.group || !info.group.trim()) return;
+          const g = info.group.trim();
+          groups[g] = groups[g] || [];
+          groups[g].push(code);
+        });
+        return groups;
+      }
+
       FACETS.forEach(facet=>{
         if(!hasFacetLabels(facet.key)) return;
         if(!filterState[filterKey][facet.key]) filterState[filterKey][facet.key] = new Set(Object.keys(labels[facet.key]));
         const active = filterState[filterKey][facet.key];
+
+        if(facet.key==='dest'){
+          const groups = computeGroups(labels.dest);
+          if(Object.keys(groups).length){
+            html += `<div class="chips" data-chipskey="${filterKey}::destGroups" style="margin:-2px 0 4px;">`;
+            Object.entries(groups).forEach(([groupName, codes])=>{
+              const anyActive = codes.some(c=>active.has(c));
+              html += `<div class="chip${anyActive?' active':''}" data-act="toggleGroup" data-filterkey="${filterKey}" data-facet="${facet.key}" data-codes="${codes.join(',')}" style="padding:6px 12px; font-size:12px;"><span class="dot"></span>${escapeHtml(groupName)}</div>`;
+            });
+            html += `</div>`;
+          }
+        }
+
         html += `<div class="chips" data-chipskey="${filterKey}::${facet.key}" style="margin:-2px 0 8px;">`;
         Object.entries(labels[facet.key]).forEach(([code, info])=>{
           if(!info.label) return;
@@ -608,6 +632,16 @@ function renderBoards(){
       const key = chip.dataset.filterkey, facet = chip.dataset.facet, code = chip.dataset.code;
       const set = filterState[key][facet];
       if(set.has(code)) set.delete(code); else set.add(code);
+      renderBoards();
+    };
+  });
+  container.querySelectorAll('[data-act="toggleGroup"]').forEach(chip=>{
+    chip.onclick = ()=>{
+      const key = chip.dataset.filterkey, facet = chip.dataset.facet;
+      const codes = chip.dataset.codes.split(',');
+      const set = filterState[key][facet];
+      const anyActive = codes.some(c=>set.has(c));
+      codes.forEach(c=>{ if(anyActive) set.delete(c); else set.add(c); });
       renderBoards();
     };
   });
@@ -743,7 +777,7 @@ function renderDirList(){
       if(!codes.length) return;
       facetsHtml += `<label style="margin-top:14px;">${facet.title}のラベル（例の時刻を実際のページで見比べて名前を付けてください）</label>`;
       codes.forEach(code=>{
-        const info = dir.labels[facet.key][code] || {label:'', travelMin:null};
+        const info = dir.labels[facet.key][code] || {label:'', travelMin:null, group:''};
         const example = exampleTimes[facet.key][code];
         facetsHtml += `
           <div class="row2" style="margin-top:6px; align-items:end;">
@@ -755,12 +789,16 @@ function renderDirList(){
             <div>
               <label style="margin:0 0 4px;">目安所要分（任意）</label>
               <input type="number" class="travelInput" data-idx="${idx}" data-code="${code}" value="${info.travelMin!=null?info.travelMin:''}" placeholder="例：11">
-            </div>` : `<div></div>`}
+            </div>` : `
+            <div>
+              <label style="margin:0 0 4px;">グループ名（任意）</label>
+              <input type="text" class="groupInput" data-idx="${idx}" data-code="${code}" value="${escapeHtml(info.group||'')}" placeholder="例：都内・千葉方面">
+            </div>`}
           </div>`;
       });
     });
     if(facetsHtml){
-      facetsHtml += `<div class="hint">種別・行き先とも、一度ラベルを付けるとこの端末で覚えて、次回以降は自動で名前が入ります。所要分を種別2つ以上に入れておくと、発車標に「どちらが早く着くか」の目安も出ます。</div>`;
+      facetsHtml += `<div class="hint">種別・行き先とも、一度ラベルを付けるとこの端末で覚えて、次回以降は自動で名前が入ります。所要分を種別2つ以上に入れておくと、発車標に「どちらが早く着くか」の目安も出ます。行き先に同じグループ名を付けると、発車標でそのグループをまとめてON/OFFできるボタンが出ます。</div>`;
     }
 
     block.innerHTML = `
@@ -802,6 +840,18 @@ function renderDirList(){
       dir.labels.type[code].travelMin = inp.value===''? null : Number(inp.value);
     };
   });
+  wrap.querySelectorAll('.groupInput').forEach(inp=>{
+    inp.oninput = ()=>{
+      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+      const dir = manualDirections[idx];
+      dir.labels.dest[code] = dir.labels.dest[code] || {label:'', group:''};
+      dir.labels.dest[code].group = inp.value;
+      settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}};
+      settings.keikyuLabels.destGroups = settings.keikyuLabels.destGroups || {};
+      settings.keikyuLabels.destGroups[code] = inp.value;
+      saveSettings();
+    };
+  });
   wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
     btn.onclick = async ()=>{
       const idx = Number(btn.dataset.idx);
@@ -839,7 +889,8 @@ function renderDirList(){
             if(!dir.labels.dest[ds.code]){
               const auto = dayData.destLegend && dayData.destLegend[ds.code];
               const known = settings.keikyuLabels.dest[ds.code];
-              dir.labels.dest[ds.code] = {label: auto||known||''};
+              const knownGroup = (settings.keikyuLabels.destGroups && settings.keikyuLabels.destGroups[ds.code]) || '';
+              dir.labels.dest[ds.code] = {label: auto||known||'', group: knownGroup};
               if(auto) settings.keikyuLabels.dest[ds.code] = auto;
               if(!auto && !known) newCodes++;
             }
