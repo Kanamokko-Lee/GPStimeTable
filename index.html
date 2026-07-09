@@ -448,6 +448,20 @@ function timeToMinutes(t){ const [h,m]=t.split(':').map(Number); return h*60+m; 
 // Per-operator color presets for train types, matched by label text.
 // Keikyu: express-family = blue, local = the board's default/plain text color.
 // Other operators can get their own preset later; unmatched labels fall back to the default dim amber.
+// Best-effort default grouping for common Keikyu destinations, so the app can
+// pre-sort them without the person having to do it by hand. Always overridable
+// per-station via the group dropdown in the edit sheet.
+const KEIKYU_DEST_GROUP_GUESS = {
+  '品川':'都内・千葉方面', '泉岳寺':'都内・千葉方面', '青物横丁':'都内・千葉方面',
+  '新橋':'都内・千葉方面', '日本橋':'都内・千葉方面', '押上':'都内・千葉方面', 'スカイツリー':'都内・千葉方面',
+  '京成高砂':'都内・千葉方面', '印旛日本医大':'都内・千葉方面', '成田空港':'都内・千葉方面', '空港第2ビル':'都内・千葉方面',
+  '羽田空港第1・第2ターミナル':'都内・千葉方面', '羽田空港第3ターミナル':'都内・千葉方面', '羽田空港':'都内・千葉方面',
+  '横浜':'横浜方面', '上大岡':'横浜方面', '金沢文庫':'横浜方面', '金沢八景':'横浜方面',
+  '新逗子':'横浜方面', '逗子・葉山':'横浜方面', '三崎口':'横浜方面', '浦賀':'横浜方面',
+  '京急久里浜':'横浜方面', '汐入':'横浜方面', '横須賀中央':'横浜方面', '堀ノ内':'横浜方面',
+};
+function guessDestGroup(label){ return KEIKYU_DEST_GROUP_GUESS[label] || ''; }
+
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
 };
@@ -791,8 +805,14 @@ function renderDirList(){
               <input type="number" class="travelInput" data-idx="${idx}" data-code="${code}" value="${info.travelMin!=null?info.travelMin:''}" placeholder="例：11">
             </div>` : `
             <div>
-              <label style="margin:0 0 4px;">グループ名（任意）</label>
-              <input type="text" class="groupInput" data-idx="${idx}" data-code="${code}" value="${escapeHtml(info.group||'')}" placeholder="例：都内・千葉方面">
+              <label style="margin:0 0 4px;">グループ</label>
+              <select class="groupInput" data-idx="${idx}" data-code="${code}">
+                <option value="" ${!info.group?'selected':''}>未設定</option>
+                <option value="都内・千葉方面" ${info.group==='都内・千葉方面'?'selected':''}>都内・千葉方面</option>
+                <option value="横浜方面" ${info.group==='横浜方面'?'selected':''}>横浜方面</option>
+                ${info.group && info.group!=='都内・千葉方面' && info.group!=='横浜方面' ? `<option value="${escapeHtml(info.group)}" selected>${escapeHtml(info.group)}</option>` : ''}
+                <option value="__custom__">その他（自由入力）…</option>
+              </select>
             </div>`}
           </div>`;
       });
@@ -840,16 +860,23 @@ function renderDirList(){
       dir.labels.type[code].travelMin = inp.value===''? null : Number(inp.value);
     };
   });
-  wrap.querySelectorAll('.groupInput').forEach(inp=>{
-    inp.oninput = ()=>{
-      const idx = Number(inp.dataset.idx), code = inp.dataset.code;
+  wrap.querySelectorAll('.groupInput').forEach(sel=>{
+    sel.onchange = ()=>{
+      const idx = Number(sel.dataset.idx), code = sel.dataset.code;
       const dir = manualDirections[idx];
+      let value = sel.value;
+      if(value==='__custom__'){
+        value = prompt('グループ名を入力してください（例：西武線方面）', '') || '';
+        if(!value){ sel.value = (dir.labels.dest[code]&&dir.labels.dest[code].group)||''; return; }
+      }
       dir.labels.dest[code] = dir.labels.dest[code] || {label:'', group:''};
-      dir.labels.dest[code].group = inp.value;
+      dir.labels.dest[code].group = value;
       settings.keikyuLabels = settings.keikyuLabels || {type:{}, dest:{}, destGroups:{}};
       settings.keikyuLabels.destGroups = settings.keikyuLabels.destGroups || {};
-      settings.keikyuLabels.destGroups[code] = inp.value;
+      settings.keikyuLabels.destGroups[code] = value;
       saveSettings();
+      renderDirList();
+      stationSheetDirty = true;
     };
   });
   wrap.querySelectorAll('[data-act="importKeikyu"]').forEach(btn=>{
@@ -889,9 +916,14 @@ function renderDirList(){
             if(!dir.labels.dest[ds.code]){
               const auto = dayData.destLegend && dayData.destLegend[ds.code];
               const known = settings.keikyuLabels.dest[ds.code];
-              const knownGroup = (settings.keikyuLabels.destGroups && settings.keikyuLabels.destGroups[ds.code]) || '';
-              dir.labels.dest[ds.code] = {label: auto||known||'', group: knownGroup};
+              const finalLabel = auto||known||'';
+              const knownGroup = (settings.keikyuLabels.destGroups && settings.keikyuLabels.destGroups[ds.code]) || guessDestGroup(finalLabel);
+              dir.labels.dest[ds.code] = {label: finalLabel, group: knownGroup};
               if(auto) settings.keikyuLabels.dest[ds.code] = auto;
+              if(knownGroup){
+                settings.keikyuLabels.destGroups = settings.keikyuLabels.destGroups || {};
+                settings.keikyuLabels.destGroups[ds.code] = knownGroup;
+              }
               if(!auto && !known) newCodes++;
             }
           });
