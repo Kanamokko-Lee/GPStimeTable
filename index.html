@@ -461,6 +461,11 @@ const KEIKYU_DEST_GROUP_GUESS = {
   '新逗子':'横浜方面', '逗子・葉山':'横浜方面', '三崎口':'横浜方面', '浦賀':'横浜方面',
   '京急久里浜':'横浜方面', '汐入':'横浜方面', '横須賀中央':'横浜方面', '堀ノ内':'横浜方面',
   '神奈川新町':'横浜方面', '京急川崎':'横浜方面',
+  // JR (横須賀・総武快速線、空港第2ビル上り方面): rider only takes 大船/逗子/久里浜-bound trains;
+  // 千葉・新宿行きは乗らない。東京行きはグループ化しない（乗りたくないが必要な時は乗るため、個別に見えるようにする）。
+  '大船':'大船・久里浜方面', '逗子':'大船・久里浜方面', '久里浜':'大船・久里浜方面',
+  '千葉':'千葉止まり',
+  '新宿':'新宿方面',
 };
 // substring rules, checked when no exact match is found
 const KEIKYU_DEST_GROUP_GUESS_CONTAINS = [
@@ -474,7 +479,7 @@ function guessDestGroup(label){
 }
 // Display order for groups/destinations: Yokohama-bound first, then Tokyo/Chiba-bound,
 // then any other custom group, then ungrouped last.
-const GROUP_DISPLAY_PRIORITY = ['横浜方面','都内・千葉方面'];
+const GROUP_DISPLAY_PRIORITY = ['横浜方面','都内・千葉方面','大船・久里浜方面','新宿方面','千葉止まり'];
 function groupPriority(groupName){
   if(!groupName) return 100;
   const i = GROUP_DISPLAY_PRIORITY.indexOf(groupName);
@@ -485,6 +490,7 @@ function groupPriority(groupName){
 // Unlisted destinations keep their alphabetical order after the listed ones.
 const DEST_DISPLAY_PRIORITY_WITHIN_GROUP = {
   '横浜方面': ['逗子・葉山','金沢文庫','金沢八景','三崎口','浦賀','横須賀中央','汐入','堀ノ内','京急久里浜','上大岡','横浜'],
+  '大船・久里浜方面': ['大船','逗子','久里浜'],
 };
 function destPriorityWithinGroup(group, label){
   const list = DEST_DISPLAY_PRIORITY_WITHIN_GROUP[group];
@@ -505,7 +511,7 @@ function sortDestCodesByGroup(labels){
 
 const TYPE_COLOR_PRESETS = {
   keikyu: { '普通':'var(--text)', '急行':'#5b9dff', 'エアポート急行':'#5b9dff', '快特':'#5b9dff', '特急':'#5b9dff' },
-  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726', '成田エクスプレス':'#ffa726' },
+  jreast: { '普通':'var(--text)', '快速':'#5b9dff', '特急':'#ffa726', '成田エクスプレス':'#ff3b30' },
 };
 function typeColorFor(label, preferredSource){
   if(!label) return null;
