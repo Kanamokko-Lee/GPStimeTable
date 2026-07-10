@@ -275,10 +275,19 @@ textarea{min-height:64px; resize:vertical;}
     <button class="btn" id="btnSaveSettings">保存</button>
     <div class="hint" style="margin-top:18px;">全データはこの端末のブラウザ内（localStorage）にのみ保存されます。他の端末とは自動同期されません。別端末に移す場合は下のエクスポート/インポートを使ってください。</div>
 
-    <label style="margin-top:20px;">登録データのエクスポート／インポート</label>
+    <label style="margin-top:20px;">登録データのエクスポート／インポート（手動コピペ）</label>
     <button class="btn secondary" id="btnExport" type="button">登録データをコピーする</button>
     <textarea id="importArea" placeholder="別端末でコピーしたデータをここに貼り付け"></textarea>
     <button class="btn secondary" id="btnImport" type="button">貼り付けたデータを読み込む（上書き）</button>
+
+    <label style="margin-top:20px;">GitHub Gist 同期（どの端末からでも同じ駅データを使う）</label>
+    <input type="text" id="cfgGithubToken" placeholder="Personal Access Token（gist権限）">
+    <input type="text" id="cfgGistId" placeholder="Gist ID（空欄なら下のボタンで新規作成）" style="margin-top:8px;">
+    <button class="btn secondary" id="btnGistCreate" type="button">新しいGistを作成</button>
+    <button class="btn secondary" id="btnGistPush" type="button">この端末の内容をGistにアップロード</button>
+    <button class="btn secondary" id="btnGistPull" type="button">Gistから取得して上書き</button>
+    <div class="hint" id="gistStatusHint"></div>
+    <div class="hint">github.com/settings/tokens で「gist」権限のPersonal Access Tokenを発行して貼り付けてください。トークンはこの端末のブラウザ内にのみ保存され、Gistの読み書きにだけ使われます。別の端末では同じトークンとGist IDを設定のうえ「Gistから取得」を押してください。</div>
   </div>
 </div>
 
@@ -322,7 +331,8 @@ function loadStations(){
 }
 function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
 function loadSettings(){
-  try{ return JSON.parse(localStorage.getItem(LS_SETTINGS)) || {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}, destEta:{}}}; }catch(e){ return {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}, destEta:{}}}; }
+  const defaults = {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}, destEta:{}}, githubToken:'', gistId:''};
+  try{ return {...defaults, ...JSON.parse(localStorage.getItem(LS_SETTINGS))}; }catch(e){ return defaults; }
 }
 function saveSettings(){ localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); }
 function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2)); }
@@ -1388,14 +1398,103 @@ document.getElementById('btnSettings').onclick = ()=>{
   document.getElementById('cfgConsumerKey').value = settings.consumerKey || '';
   document.getElementById('cfgProxyBase').value = settings.proxyBase || '';
   document.getElementById('cfgKeikyuProxyBase').value = settings.keikyuProxyBase || '';
+  document.getElementById('cfgGithubToken').value = settings.githubToken || '';
+  document.getElementById('cfgGistId').value = settings.gistId || '';
+  document.getElementById('gistStatusHint').textContent = '';
   overlaySettings.classList.add('open');
 };
 document.getElementById('btnSaveSettings').onclick = ()=>{
   settings.consumerKey = document.getElementById('cfgConsumerKey').value.trim();
   settings.proxyBase = document.getElementById('cfgProxyBase').value.trim();
   settings.keikyuProxyBase = document.getElementById('cfgKeikyuProxyBase').value.trim();
+  settings.githubToken = document.getElementById('cfgGithubToken').value.trim();
+  settings.gistId = document.getElementById('cfgGistId').value.trim();
   saveSettings();
   overlaySettings.classList.remove('open');
+};
+
+/* ---- GitHub Gist sync ---- */
+const GIST_FILENAME = 'timetable-app-stations.json';
+function gistHeaders(){
+  return {
+    'Authorization': 'token ' + settings.githubToken,
+    'Accept': 'application/vnd.github+json',
+    'Content-Type': 'application/json',
+  };
+}
+document.getElementById('btnGistCreate').onclick = async ()=>{
+  const token = document.getElementById('cfgGithubToken').value.trim();
+  if(!token){ alert('先にPersonal Access Tokenを入力してください'); return; }
+  settings.githubToken = token;
+  const hint = document.getElementById('gistStatusHint');
+  hint.textContent = '作成中…';
+  try{
+    const res = await fetch('https://api.github.com/gists', {
+      method: 'POST',
+      headers: gistHeaders(),
+      body: JSON.stringify({
+        description: 'timetable app station data',
+        public: false,
+        files: { [GIST_FILENAME]: { content: JSON.stringify({stations}, null, 0) } },
+      }),
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    settings.gistId = data.id;
+    document.getElementById('cfgGistId').value = data.id;
+    saveSettings();
+    hint.textContent = '作成しました（ID: '+data.id+'）。この端末のデータをアップロードしました。';
+  }catch(e){
+    hint.textContent = '作成に失敗しました: '+e.message;
+  }
+};
+document.getElementById('btnGistPush').onclick = async ()=>{
+  const token = document.getElementById('cfgGithubToken').value.trim();
+  const gistId = document.getElementById('cfgGistId').value.trim();
+  if(!token || !gistId){ alert('Personal Access TokenとGist IDの両方を入力してください'); return; }
+  settings.githubToken = token; settings.gistId = gistId; saveSettings();
+  const hint = document.getElementById('gistStatusHint');
+  hint.textContent = 'アップロード中…';
+  try{
+    const res = await fetch('https://api.github.com/gists/'+encodeURIComponent(gistId), {
+      method: 'PATCH',
+      headers: gistHeaders(),
+      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify({stations}, null, 0) } } }),
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    hint.textContent = 'アップロードしました（'+stations.length+'駅）。';
+  }catch(e){
+    hint.textContent = 'アップロードに失敗しました: '+e.message;
+  }
+};
+document.getElementById('btnGistPull').onclick = async ()=>{
+  const token = document.getElementById('cfgGithubToken').value.trim();
+  const gistId = document.getElementById('cfgGistId').value.trim();
+  if(!token || !gistId){ alert('Personal Access TokenとGist IDの両方を入力してください'); return; }
+  settings.githubToken = token; settings.gistId = gistId; saveSettings();
+  const hint = document.getElementById('gistStatusHint');
+  try{
+    hint.textContent = '取得中…';
+    const res = await fetch('https://api.github.com/gists/'+encodeURIComponent(gistId), { headers: gistHeaders() });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const file = data.files && data.files[GIST_FILENAME];
+    if(!file) throw new Error('Gist内にファイルが見つかりません');
+    let content = file.content;
+    if(file.truncated){
+      const rawRes = await fetch(file.raw_url);
+      content = await rawRes.text();
+    }
+    const parsed = JSON.parse(content);
+    if(!Array.isArray(parsed.stations)) throw new Error('形式が不正です');
+    if(!confirm(`Gistから${parsed.stations.length}件の駅データを取得しました。この端末の現在の登録内容は上書きされます。よろしいですか？`)) { hint.textContent=''; return; }
+    stations = parsed.stations;
+    saveStations();
+    computeNearest(); renderChips(); renderBoards();
+    hint.textContent = '取得して上書きしました（'+stations.length+'駅）。';
+  }catch(e){
+    hint.textContent = '取得に失敗しました: '+e.message;
+  }
 };
 
 /* ---- export / import (manual multi-device sync) ---- */
