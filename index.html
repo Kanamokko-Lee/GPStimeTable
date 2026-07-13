@@ -287,7 +287,7 @@ textarea{min-height:64px; resize:vertical;}
     <button class="btn secondary" id="btnGistPush" type="button">この端末の内容をGistにアップロード</button>
     <button class="btn secondary" id="btnGistPull" type="button">Gistから取得して上書き</button>
     <div class="hint" id="gistStatusHint"></div>
-    <div class="hint">github.com/settings/tokens で「gist」権限のPersonal Access Tokenを発行して貼り付けてください。トークンはこの端末のブラウザ内にのみ保存され、Gistの読み書きにだけ使われます。別の端末では同じトークンとGist IDを設定のうえ「Gistから取得」を押してください。</div>
+    <div class="hint">github.com/settings/tokens で「gist」権限のPersonal Access Tokenを発行して貼り付けてください。トークンはこの端末のブラウザ内にのみ保存されます。設定後は、駅の追加・編集や表示中の絞り込みが変わるたびに自動でGistへアップロードされ、アプリを開いたり切り替えたりしたタイミングで他の端末の更新も自動で取り込まれます（更新日時を比べて新しい方を優先します）。下の2つのボタンは、今すぐ手動で同期したいときだけ使ってください。</div>
   </div>
 </div>
 
@@ -339,6 +339,7 @@ function applyFilterState(serialized){
 }
 function saveUiState(){
   localStorage.setItem(LS_UI_STATE, JSON.stringify({activeStationId, filterState: serializeFilterState()}));
+  markModified();
 }
 function loadUiState(){
   try{
@@ -357,7 +358,22 @@ let currentPos = null;
 function loadStations(){
   try{ return JSON.parse(localStorage.getItem(LS_STATIONS)) || []; }catch(e){ return []; }
 }
-function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); }
+function saveStations(){ localStorage.setItem(LS_STATIONS, JSON.stringify(stations)); markModified(); }
+
+/* ---- auto-sync bookkeeping ---- */
+let lastModified = localStorage.getItem('tt_last_modified') || null;
+let suppressAutoPush = false;
+let autoPushTimer = null;
+function markModified(ts){
+  lastModified = ts || new Date().toISOString();
+  localStorage.setItem('tt_last_modified', lastModified);
+  if(!suppressAutoPush) scheduleAutoPush();
+}
+function scheduleAutoPush(){
+  if(!settings || !settings.githubToken || !settings.gistId) return;
+  clearTimeout(autoPushTimer);
+  autoPushTimer = setTimeout(()=>{ autoPush(); }, 2000);
+}
 function loadSettings(){
   const defaults = {consumerKey:'', proxyBase:'', keikyuProxyBase:'', keikyuLabels:{type:{}, dest:{}, destGroups:{}, destEta:{}}, githubToken:'', gistId:''};
   try{ return {...defaults, ...JSON.parse(localStorage.getItem(LS_SETTINGS))}; }catch(e){ return defaults; }
@@ -1461,9 +1477,10 @@ function gistHeaders(){
   };
 }
 function buildSyncPayload(){
-  return { stations, uiState: { activeStationId, filterState: serializeFilterState() } };
+  return { stations, uiState: { activeStationId, filterState: serializeFilterState() }, lastModified };
 }
 function applySyncPayload(parsed){
+  suppressAutoPush = true;
   stations = parsed.stations;
   saveStations();
   if(parsed.uiState){
@@ -1471,7 +1488,47 @@ function applySyncPayload(parsed){
     applyFilterState(parsed.uiState.filterState);
     saveUiState();
   }
+  lastModified = parsed.lastModified || new Date().toISOString();
+  localStorage.setItem('tt_last_modified', lastModified);
+  suppressAutoPush = false;
   computeNearest(); renderChips(); renderBoards();
+}
+
+/* ---- automatic sync: push shortly after any local change, pull whenever the app becomes visible ---- */
+async function autoPush(){
+  if(!settings.githubToken || !settings.gistId) return;
+  try{
+    const res = await fetch('https://api.github.com/gists/'+encodeURIComponent(settings.gistId), {
+      method: 'PATCH',
+      headers: gistHeaders(),
+      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(buildSyncPayload()) } } }),
+    });
+    const hint = document.getElementById('gistStatusHint');
+    if(hint) hint.textContent = res.ok ? ('自動アップロード済み（'+new Date().toLocaleTimeString('ja-JP')+'）') : ('自動アップロードに失敗しました: HTTP '+res.status);
+  }catch(e){
+    const hint = document.getElementById('gistStatusHint');
+    if(hint) hint.textContent = '自動アップロードに失敗しました: '+e.message;
+  }
+}
+async function autoPull(){
+  if(!settings.githubToken || !settings.gistId) return;
+  try{
+    const res = await fetch('https://api.github.com/gists/'+encodeURIComponent(settings.gistId), { headers: gistHeaders() });
+    if(!res.ok) return;
+    const data = await res.json();
+    const file = data.files && data.files[GIST_FILENAME];
+    if(!file) return;
+    let content = file.content;
+    if(file.truncated){ content = await (await fetch(file.raw_url)).text(); }
+    const parsed = JSON.parse(content);
+    if(!Array.isArray(parsed.stations)) return;
+    // only apply if the Gist is strictly newer than what we already have —
+    // avoids clobbering unsynced local edits with older remote data
+    if(parsed.lastModified && lastModified && parsed.lastModified <= lastModified) return;
+    applySyncPayload(parsed);
+    const hint = document.getElementById('gistStatusHint');
+    if(hint) hint.textContent = '他の端末の更新を自動で取得しました（'+new Date().toLocaleTimeString('ja-JP')+'）';
+  }catch(e){ /* silent — will retry next time the app becomes visible */ }
 }
 
 document.getElementById('btnGistCreate').onclick = async ()=>{
@@ -1613,6 +1670,11 @@ document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
   setInterval(renderBoards, 30000);
   // try silent geolocation on load (will prompt for permission)
   locate();
+  // pull any newer data from other devices in the background, without blocking first paint
+  autoPull();
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible') autoPull();
+  });
 })();
 
 })();
