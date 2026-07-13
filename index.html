@@ -299,6 +299,7 @@ textarea{min-height:64px; resize:vertical;}
 const LS_STATIONS = 'tt_stations';
 const LS_SETTINGS = 'tt_settings';
 const LS_HOLIDAYS = 'tt_holidays';
+const LS_UI_STATE = 'tt_ui_state';
 const DAY_LABELS = {weekday:'平日', saturday:'土曜', holiday:'日祝'};
 const OPERATORS = [
   {id:'Keikyu', name:'京急'},
@@ -320,6 +321,33 @@ const OPERATORS = [
 let stations = loadStations();
 let settings = loadSettings();
 let activeStationId = null; // null = follow nearest
+
+function serializeFilterState(){
+  const out = {};
+  Object.entries(filterState).forEach(([key, facets])=>{
+    out[key] = {};
+    Object.entries(facets).forEach(([facet, set])=>{ out[key][facet] = [...set]; });
+  });
+  return out;
+}
+function applyFilterState(serialized){
+  filterState = {};
+  Object.entries(serialized||{}).forEach(([key, facets])=>{
+    filterState[key] = {};
+    Object.entries(facets).forEach(([facet, arr])=>{ filterState[key][facet] = new Set(arr); });
+  });
+}
+function saveUiState(){
+  localStorage.setItem(LS_UI_STATE, JSON.stringify({activeStationId, filterState: serializeFilterState()}));
+}
+function loadUiState(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(LS_UI_STATE));
+    if(!raw) return;
+    activeStationId = raw.activeStationId || null;
+    applyFilterState(raw.filterState);
+  }catch(e){}
+}
 let nearestStationId = null;
 let editingStationId = null; // for edit sheet
 let manualDirections = []; // working copy while editing
@@ -440,7 +468,7 @@ function renderChips(){
     const isActive = activeStationId ? activeStationId===s.id : nearestStationId===s.id;
     chip.className = 'chip' + (isActive ? ' active' : '');
     chip.innerHTML = `<span class="dot"></span>${escapeHtml(s.name)}`;
-    chip.onclick = ()=>{ activeStationId = s.id; renderChips(); renderBoards(); };
+    chip.onclick = ()=>{ activeStationId = s.id; saveUiState(); renderChips(); renderBoards(); };
     chip.ondblclick = ()=> openStationSheet(s.id);
     wrap.appendChild(chip);
   });
@@ -448,7 +476,7 @@ function renderChips(){
     const followChip = document.createElement('div');
     followChip.className = 'chip' + (activeStationId===null?' active':'');
     followChip.innerHTML = `<span class="dot"></span>最寄りに追従`;
-    followChip.onclick = ()=>{ activeStationId = null; renderChips(); renderBoards(); };
+    followChip.onclick = ()=>{ activeStationId = null; saveUiState(); renderChips(); renderBoards(); };
     wrap.appendChild(followChip);
   }
 }
@@ -757,6 +785,7 @@ function renderBoards(){
       const key = chip.dataset.filterkey, facet = chip.dataset.facet, code = chip.dataset.code;
       const set = filterState[key][facet];
       if(set.has(code)) set.delete(code); else set.add(code);
+      saveUiState();
       renderBoards();
     };
   });
@@ -767,6 +796,7 @@ function renderBoards(){
       const set = filterState[key][facet];
       const anyActive = codes.some(c=>set.has(c));
       codes.forEach(c=>{ if(anyActive) set.delete(c); else set.add(c); });
+      saveUiState();
       renderBoards();
     };
   });
@@ -1408,13 +1438,21 @@ document.getElementById('btnSaveSettings').onclick = ()=>{
   settings.proxyBase = document.getElementById('cfgProxyBase').value.trim();
   settings.keikyuProxyBase = document.getElementById('cfgKeikyuProxyBase').value.trim();
   settings.githubToken = document.getElementById('cfgGithubToken').value.trim();
-  settings.gistId = document.getElementById('cfgGistId').value.trim();
+  settings.gistId = normalizeGistId(document.getElementById('cfgGistId').value);
   saveSettings();
   overlaySettings.classList.remove('open');
 };
 
 /* ---- GitHub Gist sync ---- */
 const GIST_FILENAME = 'timetable-app-stations.json';
+function normalizeGistId(input){
+  const s = (input||'').trim();
+  const m = s.match(/gist\.github\.com\/[^\/]+\/([0-9a-f]+)/i);
+  if(m) return m[1];
+  const m2 = s.match(/gist\.github\.com\/([0-9a-f]+)/i);
+  if(m2) return m2[1];
+  return s;
+}
 function gistHeaders(){
   return {
     'Authorization': 'token ' + settings.githubToken,
@@ -1422,6 +1460,20 @@ function gistHeaders(){
     'Content-Type': 'application/json',
   };
 }
+function buildSyncPayload(){
+  return { stations, uiState: { activeStationId, filterState: serializeFilterState() } };
+}
+function applySyncPayload(parsed){
+  stations = parsed.stations;
+  saveStations();
+  if(parsed.uiState){
+    activeStationId = parsed.uiState.activeStationId || null;
+    applyFilterState(parsed.uiState.filterState);
+    saveUiState();
+  }
+  computeNearest(); renderChips(); renderBoards();
+}
+
 document.getElementById('btnGistCreate').onclick = async ()=>{
   const token = document.getElementById('cfgGithubToken').value.trim();
   if(!token){ alert('先にPersonal Access Tokenを入力してください'); return; }
@@ -1435,7 +1487,7 @@ document.getElementById('btnGistCreate').onclick = async ()=>{
       body: JSON.stringify({
         description: 'timetable app station data',
         public: false,
-        files: { [GIST_FILENAME]: { content: JSON.stringify({stations}, null, 0) } },
+        files: { [GIST_FILENAME]: { content: JSON.stringify(buildSyncPayload(), null, 0) } },
       }),
     });
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -1450,8 +1502,9 @@ document.getElementById('btnGistCreate').onclick = async ()=>{
 };
 document.getElementById('btnGistPush').onclick = async ()=>{
   const token = document.getElementById('cfgGithubToken').value.trim();
-  const gistId = document.getElementById('cfgGistId').value.trim();
+  const gistId = normalizeGistId(document.getElementById('cfgGistId').value);
   if(!token || !gistId){ alert('Personal Access TokenとGist IDの両方を入力してください'); return; }
+  document.getElementById('cfgGistId').value = gistId;
   settings.githubToken = token; settings.gistId = gistId; saveSettings();
   const hint = document.getElementById('gistStatusHint');
   hint.textContent = 'アップロード中…';
@@ -1459,18 +1512,19 @@ document.getElementById('btnGistPush').onclick = async ()=>{
     const res = await fetch('https://api.github.com/gists/'+encodeURIComponent(gistId), {
       method: 'PATCH',
       headers: gistHeaders(),
-      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify({stations}, null, 0) } } }),
+      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(buildSyncPayload(), null, 0) } } }),
     });
     if(!res.ok) throw new Error('HTTP '+res.status);
-    hint.textContent = 'アップロードしました（'+stations.length+'駅）。';
+    hint.textContent = 'アップロードしました（'+stations.length+'駅、表示中の方面・フィルタも含む）。';
   }catch(e){
     hint.textContent = 'アップロードに失敗しました: '+e.message;
   }
 };
 document.getElementById('btnGistPull').onclick = async ()=>{
   const token = document.getElementById('cfgGithubToken').value.trim();
-  const gistId = document.getElementById('cfgGistId').value.trim();
+  const gistId = normalizeGistId(document.getElementById('cfgGistId').value);
   if(!token || !gistId){ alert('Personal Access TokenとGist IDの両方を入力してください'); return; }
+  document.getElementById('cfgGistId').value = gistId;
   settings.githubToken = token; settings.gistId = gistId; saveSettings();
   const hint = document.getElementById('gistStatusHint');
   try{
@@ -1487,10 +1541,8 @@ document.getElementById('btnGistPull').onclick = async ()=>{
     }
     const parsed = JSON.parse(content);
     if(!Array.isArray(parsed.stations)) throw new Error('形式が不正です');
-    if(!confirm(`Gistから${parsed.stations.length}件の駅データを取得しました。この端末の現在の登録内容は上書きされます。よろしいですか？`)) { hint.textContent=''; return; }
-    stations = parsed.stations;
-    saveStations();
-    computeNearest(); renderChips(); renderBoards();
+    if(!confirm(`Gistから${parsed.stations.length}件の駅データを取得しました。この端末の現在の登録内容（表示中の方面・フィルタ含む）は上書きされます。よろしいですか？`)) { hint.textContent=''; return; }
+    applySyncPayload(parsed);
     hint.textContent = '取得して上書きしました（'+stations.length+'駅）。';
   }catch(e){
     hint.textContent = '取得に失敗しました: '+e.message;
@@ -1499,7 +1551,7 @@ document.getElementById('btnGistPull').onclick = async ()=>{
 
 /* ---- export / import (manual multi-device sync) ---- */
 document.getElementById('btnExport').onclick = async ()=>{
-  const payload = JSON.stringify({stations});
+  const payload = JSON.stringify(buildSyncPayload());
   try{
     await navigator.clipboard.writeText(payload);
     alert('クリップボードにコピーしました。別端末を開いて、設定の「インポート」欄に貼り付けてください。');
@@ -1513,10 +1565,8 @@ document.getElementById('btnImport').onclick = ()=>{
   try{
     const parsed = JSON.parse(raw);
     if(!Array.isArray(parsed.stations)) throw new Error('形式が不正です');
-    if(!confirm(`${parsed.stations.length}件の駅データを読み込みます。この端末の現在の登録内容は上書きされます。よろしいですか？`)) return;
-    stations = parsed.stations;
-    saveStations();
-    computeNearest(); renderChips(); renderBoards();
+    if(!confirm(`${parsed.stations.length}件の駅データを読み込みます。この端末の現在の登録内容（表示中の方面・フィルタ含む）は上書きされます。よろしいですか？`)) return;
+    applySyncPayload(parsed);
     document.getElementById('importArea').value = '';
     overlaySettings.classList.remove('open');
     alert('読み込みました');
@@ -1554,6 +1604,7 @@ document.querySelectorAll('[data-close]').forEach(b=> b.onclick = ()=>{
 
 /* ============ init ============ */
 (async function init(){
+  loadUiState();
   await ensureHolidays();
   updateClock();
   renderChips();
